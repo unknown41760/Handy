@@ -170,11 +170,7 @@ pub fn change_binding(
     if settings::is_transcription_preset_binding(&id)
         && !settings::is_transcription_preset_enabled(&settings, &id)
     {
-        if let Err(e) =
-            validate_shortcut_for_implementation(&binding, settings.keyboard_implementation)
-        {
-            return Err(e);
-        }
+        validate_shortcut_for_implementation(&binding, settings.keyboard_implementation)?;
         let mut updated_binding = binding_to_modify;
         updated_binding.current_binding = binding;
         settings.bindings.insert(id, updated_binding.clone());

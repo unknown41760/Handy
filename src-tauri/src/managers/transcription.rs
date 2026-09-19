@@ -1330,7 +1330,7 @@ impl TranscriptionManager {
         // never receives "auto") and computed fresh here — it is never written
         // back to settings, so the intent survives switching models and back.
         let validated_language =
-            effective_language_for_model(&settings, self.model_manager.as_ref(), &active_model);
+            effective_language_for_model(settings, self.model_manager.as_ref(), &active_model);
         if validated_language != settings.selected_language {
             debug!(
                 "Language intent '{}' resolved to '{}' for model '{}'",
@@ -1580,7 +1580,7 @@ impl TranscriptionManager {
 
             let output_language = with_model_detected_language(
                 resolve_output_language_evidence(
-                    &settings,
+                    settings,
                     applied_language_hint.as_deref(),
                     &model_languages,
                     output_was_translated,
@@ -1599,7 +1599,7 @@ impl TranscriptionManager {
         // same as the ONNX engines.
         let filtered_result = post_process_transcription_text(
             result,
-            &settings,
+            settings,
             model_is_whisper,
             &output_language,
             &model_languages,
