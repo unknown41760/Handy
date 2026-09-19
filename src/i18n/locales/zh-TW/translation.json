@@ -16,7 +16,8 @@
     "postProcessing": "後處理",
     "history": "歷史紀錄",
     "debug": "偵錯",
-    "about": "關於"
+    "about": "關於",
+    "presets": null
   },
   "onboarding": {
     "subtitle": "首先，請選擇一種模型",
@@ -454,6 +455,30 @@
         "createFirst": "點選上方的「建立新提示詞」來建立您的第一個後處理提示詞"
       }
     },
+    "presets": {
+      "title": null,
+      "description": null,
+      "useCurrentModel": null,
+      "enabled": null,
+      "enabledDescription": null,
+      "name": null,
+      "nameDescription": null,
+      "model": null,
+      "modelDescription": null,
+      "language": null,
+      "languageDescription": null,
+      "translateEnglish": null,
+      "translateEnglishDescription": null,
+      "translateUnavailable": null,
+      "postProcess": null,
+      "postProcessDescription": null,
+      "prompt": null,
+      "promptDescription": null,
+      "choosePrompt": null,
+      "promptRequired": null,
+      "saveFailed": null,
+      "postProcessGlobalDisabled": null
+    },
     "history": {
       "title": "歷史紀錄",
       "openFolder": "開啟錄音資料夾",
@@ -468,7 +493,8 @@
       "retranscribe": "重新轉錄",
       "retranscribeError": "重新轉錄失敗，請重試。",
       "transcribing": "轉錄中...",
-      "transcriptionFailed": "轉錄失敗。您可以使用重試圖示重新轉錄。"
+      "transcriptionFailed": "轉錄失敗。您可以使用重試圖示重新轉錄。",
+      "retranscribeCurrentSettings": null
     },
     "debug": {
       "title": "偵錯",

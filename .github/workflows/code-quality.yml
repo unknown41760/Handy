@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - "src/**"
+      - "tests/**"
       - "src-tauri/src/catalog/catalog.json"
       - "scripts/**"
       - "package.json"
@@ -18,6 +19,7 @@ on:
   pull_request:
     paths:
       - "src/**"
+      - "tests/**"
       - "src-tauri/src/catalog/catalog.json"
       - "scripts/**"
       - "package.json"
@@ -54,6 +56,9 @@ jobs:
 
       - name: Test keyboard utilities
         run: bun run test:keyboard
+
+      - name: Test transcription preset language normalization
+        run: bun run test:presets:frontend
 
       - name: Run ESLint
         run: bun run lint

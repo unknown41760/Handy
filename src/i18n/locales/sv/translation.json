@@ -16,7 +16,8 @@
     "postProcessing": "Efterbearbetning",
     "history": "Historik",
     "debug": "Felsökning",
-    "about": "Om"
+    "about": "Om",
+    "presets": null
   },
   "onboarding": {
     "subtitle": "För att komma igång, välj en transkriptionsmodell",
@@ -454,6 +455,30 @@
         "createFirst": "Klicka på 'Skapa ny prompt' ovan för att skapa din första prompt för efterbearbetning."
       }
     },
+    "presets": {
+      "title": null,
+      "description": null,
+      "useCurrentModel": null,
+      "enabled": null,
+      "enabledDescription": null,
+      "name": null,
+      "nameDescription": null,
+      "model": null,
+      "modelDescription": null,
+      "language": null,
+      "languageDescription": null,
+      "translateEnglish": null,
+      "translateEnglishDescription": null,
+      "translateUnavailable": null,
+      "postProcess": null,
+      "postProcessDescription": null,
+      "prompt": null,
+      "promptDescription": null,
+      "choosePrompt": null,
+      "promptRequired": null,
+      "saveFailed": null,
+      "postProcessGlobalDisabled": null
+    },
     "history": {
       "title": "Historik",
       "openFolder": "Öppna mapp för inspelningar",
@@ -468,7 +493,8 @@
       "retranscribe": "Transkribera igen",
       "retranscribeError": "Misslyckades med att transkribera igen. Försök igen.",
       "transcribing": "Transkriberar...",
-      "transcriptionFailed": "Transkribering misslyckades. Du kan transkribera igen med hjälp av ikonen för nytt försök."
+      "transcriptionFailed": "Transkribering misslyckades. Du kan transkribera igen med hjälp av ikonen för nytt försök.",
+      "retranscribeCurrentSettings": null
     },
     "debug": {
       "title": "Felsökning",

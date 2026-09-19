@@ -388,7 +388,7 @@ const HistoryEntryComponent: React.FC<HistoryEntryProps> = ({
           <IconButton
             onClick={handleRetranscribe}
             disabled={retrying}
-            title={t("settings.history.retranscribe")}
+            title={t("settings.history.retranscribeCurrentSettings")}
           >
             <RotateCcw
               width={16}

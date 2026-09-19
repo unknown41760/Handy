@@ -16,7 +16,8 @@
     "postProcessing": "Efterbehandling",
     "history": "Historik",
     "debug": "Fejlfinding",
-    "about": "Om"
+    "about": "Om",
+    "presets": null
   },
   "onboarding": {
     "subtitle": "For at komme i gang skal du vælge en transskriptionsmodel",
@@ -454,6 +455,30 @@
         "createFirst": "Klik på 'Opret ny prompt' ovenfor for at oprette din første efterbehandlingsprompt."
       }
     },
+    "presets": {
+      "title": null,
+      "description": null,
+      "useCurrentModel": null,
+      "enabled": null,
+      "enabledDescription": null,
+      "name": null,
+      "nameDescription": null,
+      "model": null,
+      "modelDescription": null,
+      "language": null,
+      "languageDescription": null,
+      "translateEnglish": null,
+      "translateEnglishDescription": null,
+      "translateUnavailable": null,
+      "postProcess": null,
+      "postProcessDescription": null,
+      "prompt": null,
+      "promptDescription": null,
+      "choosePrompt": null,
+      "promptRequired": null,
+      "saveFailed": null,
+      "postProcessGlobalDisabled": null
+    },
     "history": {
       "title": "Historik",
       "openFolder": "Åbn optagelsesmappe",
@@ -468,7 +493,8 @@
       "retranscribe": "Transskribér igen",
       "retranscribeError": "Kunne ikke transskribere igen. Prøv igen.",
       "transcribing": "Transskriberer...",
-      "transcriptionFailed": "Transskription mislykkedes. Du kan transskribere igen ved hjælp af genforsøgsikonet."
+      "transcriptionFailed": "Transskription mislykkedes. Du kan transskribere igen ved hjælp af genforsøgsikonet.",
+      "retranscribeCurrentSettings": null
     },
     "debug": {
       "title": "Fejlfinding",

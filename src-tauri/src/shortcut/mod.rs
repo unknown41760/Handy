@@ -23,7 +23,7 @@ use crate::settings::APPLE_INTELLIGENCE_DEFAULT_MODEL_ID;
 use crate::settings::{
     self, get_settings, AutoSubmitKey, ClipboardHandling, KeyboardImplementation, LLMPrompt,
     OverlayPosition, OverlayStyle, PasteMethod, ShortcutActivation, ShortcutBinding, SoundTheme,
-    Theme, TypingTool, VadBackend, APPLE_INTELLIGENCE_PROVIDER_ID,
+    Theme, TranscriptionPreset, TypingTool, VadBackend, APPLE_INTELLIGENCE_PROVIDER_ID,
 };
 use crate::tray;
 
@@ -165,6 +165,27 @@ pub fn change_binding(
         }
     }
 
+    // Disabled preset shortcuts are persisted but intentionally not registered.
+    // This lets users configure a preset completely before turning it on.
+    if settings::is_transcription_preset_binding(&id)
+        && !settings::is_transcription_preset_enabled(&settings, &id)
+    {
+        if let Err(e) =
+            validate_shortcut_for_implementation(&binding, settings.keyboard_implementation)
+        {
+            return Err(e);
+        }
+        let mut updated_binding = binding_to_modify;
+        updated_binding.current_binding = binding;
+        settings.bindings.insert(id, updated_binding.clone());
+        settings::write_settings(&app, settings);
+        return Ok(BindingResponse {
+            success: true,
+            binding: Some(updated_binding),
+            error: None,
+        });
+    }
+
     // Unregister the existing binding
     if let Err(e) = unregister_shortcut(&app, binding_to_modify.clone()) {
         let error_msg = format!("Failed to unregister shortcut: {}", e);
@@ -234,7 +255,7 @@ pub fn reset_binding(app: AppHandle, id: String) -> Result<BindingResponse, Stri
 /// by the recording lifecycle.
 pub fn suspend_all_shortcuts(app: &AppHandle) {
     for (id, binding) in settings::get_bindings(app) {
-        if id == "cancel" {
+        if !should_unregister_during_bulk_cleanup(&id) {
             continue;
         }
         if let Err(e) = unregister_shortcut(app, binding) {
@@ -255,7 +276,7 @@ pub fn resume_all_shortcuts(app: &AppHandle) {
         if id == "cancel" {
             continue;
         }
-        if id == "transcribe_with_post_process" && !settings.post_process_enabled {
+        if !settings::is_optional_shortcut_enabled(&settings, id) {
             continue;
         }
         if let Err(e) = register_shortcut(app, binding.clone()) {
@@ -278,6 +299,174 @@ pub fn suspend_all_bindings(app: AppHandle) -> Result<(), String> {
 #[specta::specta]
 pub fn resume_all_bindings(app: AppHandle) -> Result<(), String> {
     resume_all_shortcuts(&app);
+    Ok(())
+}
+
+fn normalize_preset_language_for_model(
+    requested: &str,
+    supported_languages: &[String],
+    supports_language_detection: bool,
+) -> String {
+    let requested = requested.trim();
+    let requested = if requested.is_empty() {
+        "auto"
+    } else {
+        requested
+    };
+    if supported_languages.is_empty() {
+        return requested.to_string();
+    }
+
+    let effective = crate::managers::model::effective_language(
+        requested,
+        supported_languages,
+        supports_language_detection,
+    );
+    if effective == "auto" {
+        return effective;
+    }
+
+    // Preserve an explicit Chinese output-script choice. If the model only
+    // advertises bare Chinese and we need to choose a fallback, use Simplified
+    // so the persisted value is one the UI can actually render/select.
+    if matches!(requested, "zh-Hans" | "zh-Hant")
+        && crate::managers::model::canonical_language_code(&effective) == "zh"
+    {
+        return requested.to_string();
+    }
+
+    match crate::managers::model::canonical_language_code(&effective) {
+        "zh" => "zh-Hans".to_string(),
+        stable => stable.to_string(),
+    }
+}
+
+fn should_unregister_during_bulk_cleanup(id: &str) -> bool {
+    // `cancel` is dynamic. Every other known binding is safe to attempt to
+    // unregister even when settings say it is disabled: settings can describe
+    // desired state, not necessarily what the OS backend still has registered
+    // after a partial failure.
+    id != "cancel"
+}
+
+/// Update one of the fixed transcription preset slots. Shortcut editing stays
+/// in the existing `change_binding` command; this command owns the preset's
+/// model/language/translation/post-processing metadata and enable state.
+#[tauri::command]
+#[specta::specta]
+pub fn update_transcription_preset(
+    app: AppHandle,
+    mut preset: TranscriptionPreset,
+) -> Result<(), String> {
+    if !settings::is_transcription_preset_binding(&preset.id) {
+        return Err(format!("Unknown transcription preset id: {}", preset.id));
+    }
+
+    preset.name = preset.name.trim().to_string();
+    if preset.name.is_empty() {
+        return Err("Preset name cannot be empty".to_string());
+    }
+    if preset.language.trim().is_empty() {
+        preset.language = "auto".to_string();
+    }
+
+    let mut app_settings = settings::get_settings(&app);
+
+    // A preset must never persist a model that cannot actually be used. For
+    // "Use current model", validate the effective model when the preset is
+    // enabled; explicit model selections are validated on every save.
+    let effective_model_id = if preset.model_id.trim().is_empty() {
+        app_settings.selected_model.clone()
+    } else {
+        preset.model_id.clone()
+    };
+    let must_validate_model = !preset.model_id.trim().is_empty() || preset.enabled;
+    if must_validate_model && effective_model_id.trim().is_empty() {
+        return Err("Preset requires a downloaded transcription model".to_string());
+    }
+
+    if !effective_model_id.trim().is_empty() {
+        let model_manager = app.state::<std::sync::Arc<crate::managers::model::ModelManager>>();
+        match model_manager.get_model_info(&effective_model_id) {
+            Some(model) => {
+                if must_validate_model && !model.is_downloaded {
+                    return Err(format!("Model not downloaded: {}", effective_model_id));
+                }
+                preset.language = normalize_preset_language_for_model(
+                    &preset.language,
+                    &model.supported_languages,
+                    model.supports_language_detection,
+                );
+                if !model.supports_translation {
+                    preset.translate_to_english = false;
+                }
+            }
+            None if must_validate_model => {
+                return Err(format!("Model not found: {}", effective_model_id));
+            }
+            None => {}
+        }
+    }
+
+    let index = app_settings
+        .transcription_presets
+        .iter()
+        .position(|existing| existing.id == preset.id)
+        .ok_or_else(|| format!("Preset slot '{}' is missing from settings", preset.id))?;
+    let was_enabled = app_settings.transcription_presets[index].enabled;
+    let was_post_process = app_settings.transcription_presets[index].post_process;
+
+    if preset.post_process {
+        if !app_settings.post_process_enabled && !was_post_process {
+            return Err(
+                "Global AI post-processing is disabled; enable it before enabling preset post-processing"
+                    .to_string(),
+            );
+        }
+        settings::validate_preset_post_process_configuration(
+            &app_settings,
+            preset.post_process_prompt_id.as_deref(),
+        )?;
+    } else if preset
+        .post_process_prompt_id
+        .as_deref()
+        .is_some_and(|prompt_id| {
+            !app_settings
+                .post_process_prompts
+                .iter()
+                .any(|prompt| prompt.id == prompt_id)
+        })
+    {
+        preset.post_process_prompt_id = None;
+    }
+    let binding = app_settings
+        .bindings
+        .get(&preset.id)
+        .cloned()
+        .ok_or_else(|| format!("Shortcut binding '{}' is missing", preset.id))?;
+
+    if preset.enabled && !was_enabled {
+        register_shortcut(&app, binding.clone())?;
+    } else if !preset.enabled && was_enabled {
+        unregister_shortcut(&app, binding.clone())?;
+    }
+
+    app_settings.transcription_presets[index] = preset.clone();
+    if let Some(binding) = app_settings.bindings.get_mut(&preset.id) {
+        binding.name = format!("{} Shortcut", preset.name);
+        binding.description = format!("Record using the '{}' transcription preset.", preset.name);
+    }
+    settings::write_settings(&app, app_settings);
+    crate::secure_input::reconcile_fallback(&app);
+
+    let _ = app.emit(
+        "settings-changed",
+        serde_json::json!({
+            "setting": "transcription_presets",
+            "value": preset
+        }),
+    );
+
     Ok(())
 }
 
@@ -412,8 +601,7 @@ fn unregister_all_shortcuts(app: &AppHandle, implementation: KeyboardImplementat
     let bindings = settings::get_bindings(app);
 
     for (id, binding) in bindings {
-        // Skip cancel shortcut as it's dynamically registered
-        if id == "cancel" {
+        if !should_unregister_during_bulk_cleanup(&id) {
             continue;
         }
 
@@ -446,8 +634,7 @@ fn register_all_shortcuts_for_implementation(
             continue;
         }
 
-        // Skip post-processing shortcut when the feature is disabled
-        if id == "transcribe_with_post_process" && !current_settings.post_process_enabled {
+        if !settings::is_optional_shortcut_enabled(&current_settings, id) {
             continue;
         }
 
@@ -1161,6 +1348,15 @@ pub fn update_post_process_prompt(
     }
 }
 
+fn reconcile_presets_for_deleted_prompt(settings: &mut settings::AppSettings, id: &str) {
+    for preset in &mut settings.transcription_presets {
+        if preset.post_process_prompt_id.as_deref() == Some(id) {
+            preset.post_process = false;
+            preset.post_process_prompt_id = None;
+        }
+    }
+}
+
 #[tauri::command]
 #[specta::specta]
 pub fn delete_post_process_prompt(app: AppHandle, id: String) -> Result<(), String> {
@@ -1179,11 +1375,14 @@ pub fn delete_post_process_prompt(app: AppHandle, id: String) -> Result<(), Stri
         return Err(format!("Prompt with id '{}' not found", id));
     }
 
-    // If the deleted prompt was selected, select the first one or None
+    // If the deleted prompt was selected, select the first one or None. Presets
+    // referencing it are explicitly turned off for post-processing so they can
+    // never claim to polish text while silently doing nothing.
     if settings.post_process_selected_prompt_id.as_ref() == Some(&id) {
         settings.post_process_selected_prompt_id =
             settings.post_process_prompts.first().map(|p| p.id.clone());
     }
+    reconcile_presets_for_deleted_prompt(&mut settings, &id);
 
     settings::write_settings(&app, settings);
     Ok(())
@@ -1422,5 +1621,70 @@ mod tests {
             assert!(key.parse::<Shortcut>().is_ok(), "Tauri rejected {key}");
             assert!(key.parse::<Hotkey>().is_ok(), "HandyKeys rejected {key}");
         }
+    }
+}
+
+#[cfg(test)]
+mod preset_tests {
+    use super::{
+        normalize_preset_language_for_model, reconcile_presets_for_deleted_prompt,
+        should_unregister_during_bulk_cleanup,
+    };
+    use crate::settings::get_default_settings;
+
+    #[test]
+    fn preset_language_normalization_never_persists_unsupported_auto() {
+        let languages = vec!["en-US".to_string(), "nl-NL".to_string()];
+
+        assert_eq!(
+            normalize_preset_language_for_model("auto", &languages, false),
+            "en"
+        );
+        assert_eq!(
+            normalize_preset_language_for_model("nl", &languages, false),
+            "nl"
+        );
+        assert_eq!(
+            normalize_preset_language_for_model("de", &languages, true),
+            "auto"
+        );
+        assert_eq!(
+            normalize_preset_language_for_model("auto", &["zh".to_string()], false),
+            "zh-Hans"
+        );
+    }
+
+    #[test]
+    fn bulk_cleanup_includes_disabled_preset_bindings() {
+        assert!(should_unregister_during_bulk_cleanup("preset_1"));
+        assert!(should_unregister_during_bulk_cleanup("transcribe"));
+        assert!(!should_unregister_during_bulk_cleanup("cancel"));
+    }
+
+    #[test]
+    fn deleting_prompt_turns_off_affected_preset_post_processing() {
+        let mut settings = get_default_settings();
+
+        settings.transcription_presets[0].post_process = true;
+        settings.transcription_presets[0].post_process_prompt_id = Some("prompt-a".to_string());
+
+        settings.transcription_presets[1].post_process = true;
+        settings.transcription_presets[1].post_process_prompt_id = Some("prompt-b".to_string());
+
+        reconcile_presets_for_deleted_prompt(&mut settings, "prompt-a");
+
+        assert!(!settings.transcription_presets[0].post_process);
+        assert_eq!(
+            settings.transcription_presets[0].post_process_prompt_id,
+            None
+        );
+
+        assert!(settings.transcription_presets[1].post_process);
+        assert_eq!(
+            settings.transcription_presets[1]
+                .post_process_prompt_id
+                .as_deref(),
+            Some("prompt-b")
+        );
     }
 }

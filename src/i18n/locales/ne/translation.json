@@ -16,7 +16,8 @@
     "postProcessing": "पोस्ट प्रोसेस",
     "history": "हिस्ट्री",
     "debug": "डिबग",
-    "about": "बारेमा"
+    "about": "बारेमा",
+    "presets": null
   },
   "onboarding": {
     "subtitle": "सुरु गर्न, एउटा ट्रान्सक्रिप्सन मोडेल छान्नुहोस्",
@@ -454,6 +455,30 @@
         "createFirst": "आफ्नो पहिलो पोस्ट-प्रोसेसिङ प्रम्प्ट बनाउन माथिको 'नयाँ प्रम्प्ट बनाउनुहोस्' क्लिक गर्नुहोस्।"
       }
     },
+    "presets": {
+      "title": null,
+      "description": null,
+      "useCurrentModel": null,
+      "enabled": null,
+      "enabledDescription": null,
+      "name": null,
+      "nameDescription": null,
+      "model": null,
+      "modelDescription": null,
+      "language": null,
+      "languageDescription": null,
+      "translateEnglish": null,
+      "translateEnglishDescription": null,
+      "translateUnavailable": null,
+      "postProcess": null,
+      "postProcessDescription": null,
+      "prompt": null,
+      "promptDescription": null,
+      "choosePrompt": null,
+      "promptRequired": null,
+      "saveFailed": null,
+      "postProcessGlobalDisabled": null
+    },
     "history": {
       "title": "हिस्ट्री",
       "openFolder": "रेकर्डिङ फोल्डर खोल्नुहोस्",
@@ -468,7 +493,8 @@
       "retranscribe": "फेरि ट्रान्सक्राइब गर्नुहोस्",
       "retranscribeError": "फेरि ट्रान्सक्राइब गर्न सकिएन। कृपया फेरि प्रयास गर्नुहोस्।",
       "transcribing": "ट्रान्सक्राइब गरिँदैछ...",
-      "transcriptionFailed": "ट्रान्सक्रिप्सन गर्न सकिएन। रिट्राई आइकन प्रयोग गरेर फेरि ट्रान्सक्राइब गर्न सक्नुहुन्छ।"
+      "transcriptionFailed": "ट्रान्सक्रिप्सन गर्न सकिएन। रिट्राई आइकन प्रयोग गरेर फेरि ट्रान्सक्राइब गर्न सक्नुहुन्छ।",
+      "retranscribeCurrentSettings": null
     },
     "debug": {
       "title": "डिबग",

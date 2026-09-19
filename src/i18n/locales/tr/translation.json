@@ -16,7 +16,8 @@
     "postProcessing": "Son İşlem",
     "history": "Geçmiş",
     "debug": "Hata Ayıklama",
-    "about": "Hakkında"
+    "about": "Hakkında",
+    "presets": null
   },
   "onboarding": {
     "subtitle": "Başlamak için bir transkripsiyon modeli seçin",
@@ -454,6 +455,30 @@
         "createFirst": "İlk son işlem promptunuzu oluşturmak için yukarıdaki “Yeni Prompt Oluştur” seçeneğine tıklayın."
       }
     },
+    "presets": {
+      "title": null,
+      "description": null,
+      "useCurrentModel": null,
+      "enabled": null,
+      "enabledDescription": null,
+      "name": null,
+      "nameDescription": null,
+      "model": null,
+      "modelDescription": null,
+      "language": null,
+      "languageDescription": null,
+      "translateEnglish": null,
+      "translateEnglishDescription": null,
+      "translateUnavailable": null,
+      "postProcess": null,
+      "postProcessDescription": null,
+      "prompt": null,
+      "promptDescription": null,
+      "choosePrompt": null,
+      "promptRequired": null,
+      "saveFailed": null,
+      "postProcessGlobalDisabled": null
+    },
     "history": {
       "title": "Geçmiş",
       "openFolder": "Kayıtlar Klasörünü Aç",
@@ -468,7 +493,8 @@
       "retranscribe": "Yeniden transkribe et",
       "retranscribeError": "Yeniden transkripsiyon başarısız oldu. Lütfen tekrar deneyin.",
       "transcribing": "Transkribe ediliyor...",
-      "transcriptionFailed": "Transkripsiyon başarısız oldu. Yeniden deneme simgesini kullanarak tekrar transkribe edebilirsiniz."
+      "transcriptionFailed": "Transkripsiyon başarısız oldu. Yeniden deneme simgesini kullanarak tekrar transkribe edebilirsiniz.",
+      "retranscribeCurrentSettings": null
     },
     "debug": {
       "title": "Hata Ayıklama",

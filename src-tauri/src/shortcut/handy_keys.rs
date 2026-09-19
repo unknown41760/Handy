@@ -433,8 +433,7 @@ pub fn init_shortcuts(app: &AppHandle) -> Result<(), String> {
         if id == "cancel" {
             continue;
         }
-        // Skip post-processing shortcut when the feature is disabled
-        if id == "transcribe_with_post_process" && !user_settings.post_process_enabled {
+        if !settings::is_optional_shortcut_enabled(&user_settings, &id) {
             continue;
         }
 

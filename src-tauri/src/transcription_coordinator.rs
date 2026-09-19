@@ -1,4 +1,4 @@
-use crate::actions::ACTION_MAP;
+use crate::actions::resolve_action;
 use crate::managers::audio::AudioRecordingManager;
 use crate::settings::ShortcutActivation;
 use log::{debug, error, warn};
@@ -535,7 +535,9 @@ pub struct TranscriptionCoordinator {
 }
 
 pub fn is_transcribe_binding(id: &str) -> bool {
-    id == "transcribe" || id == "transcribe_with_post_process"
+    id == "transcribe"
+        || id == "transcribe_with_post_process"
+        || crate::settings::is_transcription_preset_binding(id)
 }
 
 impl TranscriptionCoordinator {
@@ -687,8 +689,8 @@ fn run_effect(app: &AppHandle, state: &mut CoordinatorState, effect: Effect) {
 /// Execute a start effect; returns whether recording actually began, so the
 /// state machine can roll back its optimistic transition on failure.
 fn start(app: &AppHandle, binding_id: &str, hotkey_string: &str) -> bool {
-    let Some(action) = ACTION_MAP.get(binding_id) else {
-        warn!("No action in ACTION_MAP for '{binding_id}'");
+    let Some(action) = resolve_action(binding_id) else {
+        warn!("No action defined for '{binding_id}'");
         return false;
     };
     action.start(app, binding_id, hotkey_string);
@@ -702,8 +704,8 @@ fn start(app: &AppHandle, binding_id: &str, hotkey_string: &str) -> bool {
 }
 
 fn stop(app: &AppHandle, binding_id: &str, hotkey_string: &str) {
-    let Some(action) = ACTION_MAP.get(binding_id) else {
-        warn!("No action in ACTION_MAP for '{binding_id}'");
+    let Some(action) = resolve_action(binding_id) else {
+        warn!("No action defined for '{binding_id}'");
         return;
     };
     action.stop(app, binding_id, hotkey_string);
@@ -1152,6 +1154,25 @@ mod tests {
         match state.on_processing_finished() {
             Some(Effect::Start { binding_id, .. }) => assert_eq!(binding_id, BINDING),
             other => panic!("expected Start for '{BINDING}', got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn queued_preset_binding_survives_processing_drain() {
+        let mut state = CoordinatorState::new();
+        let now = Instant::now();
+        drive_into_processing(&mut state, now);
+
+        assert!(state
+            .on_input(
+                toggle_input_for("preset_2", true),
+                now + Duration::from_millis(200)
+            )
+            .is_none());
+
+        match state.on_processing_finished() {
+            Some(Effect::Start { binding_id, .. }) => assert_eq!(binding_id, "preset_2"),
+            other => panic!("expected queued preset to start, got {other:?}"),
         }
     }
 

@@ -1,6 +1,6 @@
 use crate::managers::model::{ModelInfo, ModelManager};
 use crate::managers::transcription::{ModelStateEvent, TranscriptionManager};
-use crate::settings::{get_settings, write_settings, ModelUnloadTimeout};
+use crate::settings::{get_settings, write_settings, AppSettings, ModelUnloadTimeout};
 use log::error;
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -61,6 +61,29 @@ pub async fn download_model(
     result
 }
 
+fn reconcile_presets_for_deleted_model(
+    settings: &mut AppSettings,
+    model_id: &str,
+    deleting_selected_model: bool,
+) -> Vec<String> {
+    let mut disabled = Vec::new();
+    for preset in &mut settings.transcription_presets {
+        let explicitly_references_deleted = preset.model_id == model_id;
+        let inherited_deleted_selection =
+            deleting_selected_model && preset.model_id.trim().is_empty();
+        if explicitly_references_deleted || inherited_deleted_selection {
+            if preset.enabled {
+                disabled.push(preset.id.clone());
+            }
+            preset.enabled = false;
+            if explicitly_references_deleted {
+                preset.model_id.clear();
+            }
+        }
+    }
+    disabled
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn delete_model(
@@ -69,21 +92,58 @@ pub async fn delete_model(
     transcription_manager: State<'_, Arc<TranscriptionManager>>,
     model_id: String,
 ) -> Result<(), String> {
-    // If deleting the active model, unload it and clear the setting
-    let settings = get_settings(&app_handle);
-    if settings.selected_model == model_id {
+    let settings_before = get_settings(&app_handle);
+    let deleting_selected_model = settings_before.selected_model == model_id;
+    let deleting_loaded_model =
+        transcription_manager.get_current_model().as_deref() == Some(model_id.as_str());
+
+    // A loaded model must be released before its files can be removed. A preset
+    // can leave a different model resident than `selected_model`, so check the
+    // actual loaded engine rather than only the persistent selection. Delay all
+    // persisted settings changes until deletion succeeds.
+    if deleting_loaded_model {
         transcription_manager
             .unload_model()
             .map_err(|e| format!("Failed to unload model: {}", e))?;
-
-        let mut settings = get_settings(&app_handle);
-        settings.selected_model = String::new();
-        write_settings(&app_handle, settings);
     }
 
     model_manager
         .delete_model(&model_id)
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+
+    let mut settings = get_settings(&app_handle);
+    if deleting_selected_model {
+        settings.selected_model = String::new();
+    }
+
+    // Disable every enabled preset whose effective model was just deleted. An
+    // explicit reference is also reset to "Use current model" so the stale id
+    // cannot survive in persisted settings.
+    let disabled_preset_ids =
+        reconcile_presets_for_deleted_model(&mut settings, &model_id, deleting_selected_model);
+    let bindings_to_unregister: Vec<_> = disabled_preset_ids
+        .iter()
+        .filter_map(|id| settings.bindings.get(id).cloned())
+        .collect();
+
+    // First try to release any OS registrations while the preset transition is
+    // still in-flight. Persist the disabled state regardless: if a backend
+    // unregistration fails, broad shortcut cleanup intentionally retries all
+    // preset bindings (including disabled ones) on the next cleanup/switch.
+    for binding in bindings_to_unregister {
+        if let Err(error) = crate::shortcut::unregister_shortcut(&app_handle, binding) {
+            log::warn!("Failed to unregister preset for deleted model: {}", error);
+        }
+    }
+
+    write_settings(&app_handle, settings);
+    let _ = app_handle.emit(
+        "settings-changed",
+        serde_json::json!({ "setting": "transcription_presets" }),
+    );
+    crate::secure_input::reconcile_fallback(&app_handle);
+
+    Ok(())
 }
 
 /// Shared logic for switching the active model, used by both the Tauri command
@@ -203,4 +263,44 @@ pub async fn cancel_download(
     model_manager
         .cancel_download(&model_id)
         .map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::reconcile_presets_for_deleted_model;
+    use crate::settings::get_default_settings;
+
+    #[test]
+    fn deleting_explicit_preset_model_disables_and_resets_that_preset() {
+        let mut settings = get_default_settings();
+        settings.selected_model = "normal-model".to_string();
+        settings.transcription_presets[0].enabled = true;
+        settings.transcription_presets[0].model_id = "preset-model".to_string();
+        settings.transcription_presets[1].enabled = true;
+        settings.transcription_presets[1].model_id = "other-model".to_string();
+
+        let disabled = reconcile_presets_for_deleted_model(&mut settings, "preset-model", false);
+
+        assert_eq!(disabled, vec!["preset_1".to_string()]);
+        assert!(!settings.transcription_presets[0].enabled);
+        assert!(settings.transcription_presets[0].model_id.is_empty());
+        assert!(settings.transcription_presets[1].enabled);
+        assert_eq!(settings.transcription_presets[1].model_id, "other-model");
+    }
+
+    #[test]
+    fn deleting_current_model_disables_use_current_presets() {
+        let mut settings = get_default_settings();
+        settings.selected_model = "normal-model".to_string();
+        settings.transcription_presets[0].enabled = true;
+        settings.transcription_presets[0].model_id.clear();
+        settings.transcription_presets[1].enabled = true;
+        settings.transcription_presets[1].model_id = "other-model".to_string();
+
+        let disabled = reconcile_presets_for_deleted_model(&mut settings, "normal-model", true);
+
+        assert_eq!(disabled, vec!["preset_1".to_string()]);
+        assert!(!settings.transcription_presets[0].enabled);
+        assert!(settings.transcription_presets[1].enabled);
+    }
 }

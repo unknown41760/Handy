@@ -740,29 +740,89 @@ impl TranscriptionManager {
         Ok(())
     }
 
-    /// Kicks off the model loading in a background thread if it's not already loaded
+    /// Kicks off loading for the persisted transcription model. Operation-specific
+    /// callers (presets) use [`initiate_model_load_for`] with their immutable
+    /// settings snapshot instead.
     pub fn initiate_model_load(&self) {
+        let settings = get_settings(&self.app_handle);
+        self.initiate_model_load_for(&settings.selected_model);
+    }
+
+    /// Ensure exactly `model_id` is resident after any concurrent load finishes.
+    /// This is deliberately parameterized: no runtime/global preset state is
+    /// consulted, so unrelated transcription jobs cannot inherit a preset.
+    fn ensure_model_loaded_for(&self, model_id: &str) -> Result<()> {
+        if model_id.trim().is_empty() {
+            return Err(anyhow::anyhow!("No transcription model is selected"));
+        }
+
+        loop {
+            {
+                let mut is_loading = self.is_loading.lock().unwrap();
+                while *is_loading {
+                    is_loading = self.loading_condvar.wait(is_loading).unwrap();
+                }
+            }
+
+            let reload_pending = self.reload_model_on_next_use.load(Ordering::Acquire);
+            if !reload_pending
+                && self.is_model_loaded()
+                && self.get_current_model().as_deref() == Some(model_id)
+            {
+                return Ok(());
+            }
+
+            let Some(_loading_guard) = self.try_start_loading() else {
+                continue;
+            };
+
+            // Re-check after claiming the loading slot in case another waiter
+            // completed the requested load between the checks above.
+            let reload_pending = self.reload_model_on_next_use.load(Ordering::Acquire);
+            if !reload_pending
+                && self.is_model_loaded()
+                && self.get_current_model().as_deref() == Some(model_id)
+            {
+                return Ok(());
+            }
+            if reload_pending {
+                self.reload_model_on_next_use
+                    .store(false, Ordering::Release);
+            }
+
+            info!("Loading transcription model '{}' for operation", model_id);
+            return self.load_model(model_id);
+        }
+    }
+
+    pub fn initiate_model_load_for(&self, model_id: &str) {
+        if model_id.trim().is_empty() {
+            error!("Cannot initiate model load: model id is empty");
+            return;
+        }
+
         let mut is_loading = self.is_loading.lock().unwrap();
         if *is_loading {
             return;
         }
 
         let reload_pending = self.reload_model_on_next_use.load(Ordering::Acquire);
-        if !reload_pending && self.is_model_loaded() {
+        let current_model = self.get_current_model();
+        if !reload_pending && self.is_model_loaded() && current_model.as_deref() == Some(model_id) {
             return;
         }
 
         *is_loading = true;
         let self_clone = self.clone();
+        let model_id = model_id.to_string();
         thread::spawn(move || {
             if reload_pending {
                 self_clone
                     .reload_model_on_next_use
                     .store(false, Ordering::Release);
             }
-            let settings = get_settings(&self_clone.app_handle);
-            if let Err(e) = self_clone.load_model(&settings.selected_model) {
-                error!("Failed to load model: {}", e);
+            if let Err(e) = self_clone.load_model(&model_id) {
+                error!("Failed to load model '{}': {}", model_id, e);
             }
             let mut is_loading = self_clone.is_loading.lock().unwrap();
             *is_loading = false;
@@ -812,6 +872,10 @@ impl TranscriptionManager {
     /// `None` so the caller falls back to batch transcription. Frames sent
     /// before the stream begins queue on the channel and are not lost.
     pub fn start_stream(&self) {
+        self.start_stream_with_settings(get_settings(&self.app_handle));
+    }
+
+    pub fn start_stream_with_settings(&self, settings: AppSettings) {
         if self.router.is_open() || self.active_stream_worker.load(Ordering::Acquire) != 0 {
             warn!("start_stream called while a stream worker is already active");
             return;
@@ -829,10 +893,15 @@ impl TranscriptionManager {
         self.stream_active.store(false, Ordering::Release);
 
         let manager = self.clone();
-        thread::spawn(move || manager.run_stream_worker(rx, worker_id));
+        thread::spawn(move || manager.run_stream_worker(rx, worker_id, settings));
     }
 
-    fn run_stream_worker(&self, rx: mpsc::Receiver<StreamCmd>, worker_id: u64) {
+    fn run_stream_worker(
+        &self,
+        rx: mpsc::Receiver<StreamCmd>,
+        worker_id: u64,
+        settings: AppSettings,
+    ) {
         let _worker = StreamWorkerGuard {
             worker_id,
             active_stream_worker: Arc::clone(&self.active_stream_worker),
@@ -847,6 +916,13 @@ impl TranscriptionManager {
             while *is_loading {
                 is_loading = self.loading_condvar.wait(is_loading).unwrap();
             }
+        }
+
+        if let Err(error) = self.ensure_model_loaded_for(&settings.selected_model) {
+            error!("Live preview: failed to load operation model: {}", error);
+            self.router.clear();
+            drain_until_finalize(rx);
+            return;
         }
 
         let model_id = self.get_current_model().unwrap_or_default();
@@ -927,7 +1003,6 @@ impl TranscriptionManager {
 
         // Build run options mirroring the offline transcribe-cpp path: task +
         // language gated against what the model actually advertises.
-        let settings = get_settings(&self.app_handle);
         let effective_language =
             effective_language_for_model(&settings, self.model_manager.as_ref(), &model_id);
         let run_plan = transcribe_cpp_run_plan(
@@ -1113,6 +1188,11 @@ impl TranscriptionManager {
     /// A timeout may still leave the worker holding the engine, so callers
     /// should surface it instead of immediately starting a batch fallback.
     pub fn finalize_stream(&self) -> Result<Option<String>> {
+        let settings = get_settings(&self.app_handle);
+        self.finalize_stream_with_settings(&settings)
+    }
+
+    pub fn finalize_stream_with_settings(&self, settings: &AppSettings) -> Result<Option<String>> {
         let Some(tx) = self.router.take() else {
             return Ok(None);
         };
@@ -1133,12 +1213,11 @@ impl TranscriptionManager {
             }
         };
 
-        let settings = get_settings(&self.app_handle);
         // Streaming models do not receive a decode prompt, so custom words
         // always go through the shared fuzzy post-correction path.
         let filtered = post_process_transcription_text(
             finalized.text,
-            &settings,
+            settings,
             false,
             &finalized.output_language,
             &finalized.supported_languages,
@@ -1174,6 +1253,28 @@ impl TranscriptionManager {
     }
 
     pub fn transcribe(&self, audio: Vec<f32>) -> Result<String> {
+        let settings = get_settings(&self.app_handle);
+        // Preserve the legacy contract for callers such as --transcribe-file:
+        // they may have deliberately loaded a model different from the persisted
+        // selection. They still get persistent language/output settings, but the
+        // already-loaded engine remains authoritative.
+        self.transcribe_with_settings_inner(audio, &settings, None)
+    }
+
+    pub fn transcribe_with_settings(
+        &self,
+        audio: Vec<f32>,
+        settings: &AppSettings,
+    ) -> Result<String> {
+        self.transcribe_with_settings_inner(audio, settings, Some(&settings.selected_model))
+    }
+
+    fn transcribe_with_settings_inner(
+        &self,
+        audio: Vec<f32>,
+        settings: &AppSettings,
+        requested_model: Option<&str>,
+    ) -> Result<String> {
         #[cfg(debug_assertions)]
         if std::env::var("HANDY_FORCE_TRANSCRIPTION_FAILURE").is_ok() {
             return Err(anyhow::anyhow!(
@@ -1195,22 +1296,25 @@ impl TranscriptionManager {
             return Ok(String::new());
         }
 
-        // Check if model is loaded, if not try to load it
-        {
-            // If the model is loading, wait for it to complete.
+        // Coordinator-owned operations pass an explicit requested model and
+        // therefore guarantee that exact snapshot is resident. Legacy/direct
+        // callers pass None and retain the historical "use the loaded engine"
+        // behavior (important for CLI --transcribe-file model overrides).
+        if let Some(model_id) = requested_model {
+            self.ensure_model_loaded_for(model_id)?;
+        } else {
             let mut is_loading = self.is_loading.lock().unwrap();
             while *is_loading {
                 is_loading = self.loading_condvar.wait(is_loading).unwrap();
             }
+        }
 
+        {
             let engine_guard = self.lock_engine();
             if engine_guard.is_none() {
                 return Err(anyhow::anyhow!("Model is not loaded for transcription."));
             }
         }
-
-        // Get current settings for configuration
-        let settings = get_settings(&self.app_handle);
 
         // Validate selected language against the model's supported languages.
         // If the language isn't supported, fall back to "auto" to prevent errors.

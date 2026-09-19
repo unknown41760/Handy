@@ -16,7 +16,8 @@
     "postProcessing": "Post Process",
     "history": "History",
     "debug": "Debug",
-    "about": "About"
+    "about": "About",
+    "presets": "Presets"
   },
   "onboarding": {
     "subtitle": "To get started, choose a transcription model",
@@ -468,7 +469,8 @@
       "retranscribe": "Re-transcribe",
       "retranscribeError": "Failed to re-transcribe. Please try again.",
       "transcribing": "Transcribing...",
-      "transcriptionFailed": "Transcription failed. You can re-transcribe using the retry icon."
+      "transcriptionFailed": "Transcription failed. You can re-transcribe using the retry icon.",
+      "retranscribeCurrentSettings": "Re-transcribe using current model and settings"
     },
     "debug": {
       "title": "Debug",
@@ -636,6 +638,30 @@
           "details": "Handy's local speech-to-text is built on transcribe.cpp and ggml. Thanks to the amazing work by Georgi Gerganov and contributors."
         }
       }
+    },
+    "presets": {
+      "title": "Transcription Presets",
+      "description": "Assign a shortcut to a complete transcription setup. Presets temporarily override the model, input language, English translation, and post-processing without changing your normal settings. For other target languages, use a post-processing translation prompt.",
+      "useCurrentModel": "Use current model",
+      "enabled": "Enable preset",
+      "enabledDescription": "Register this preset’s global shortcut.",
+      "name": "Preset name",
+      "nameDescription": "A label to help you identify this transcription workflow.",
+      "model": "Speech model",
+      "modelDescription": "Choose a downloaded model for this preset, or use the normally selected model.",
+      "language": "Input language",
+      "languageDescription": "Choose the language hint used by this preset.",
+      "translateEnglish": "Translate to English",
+      "translateEnglishDescription": "Ask the selected speech model to translate recognized speech into English.",
+      "translateUnavailable": "The selected speech model does not support built-in translation.",
+      "postProcess": "AI post-processing",
+      "postProcessDescription": "Apply a saved post-processing prompt after transcription.",
+      "prompt": "Post-processing prompt",
+      "promptDescription": "Choose which saved prompt this preset should use.",
+      "choosePrompt": "Choose a prompt",
+      "promptRequired": "Choose a post-processing prompt before enabling AI post-processing.",
+      "saveFailed": "Failed to save transcription preset",
+      "postProcessGlobalDisabled": "Post-processing is configured per preset, but the global Post Processing switch is off. No text will be sent to an AI provider until it is enabled."
     }
   },
   "footer": {

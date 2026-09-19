@@ -7,7 +7,13 @@ use crate::managers::history::HistoryManager;
 use crate::managers::model::ModelManager;
 use crate::managers::transcription::StreamWorkKind;
 use crate::managers::transcription::TranscriptionManager;
-use crate::settings::{get_settings, AppSettings, OverlayStyle, APPLE_INTELLIGENCE_PROVIDER_ID};
+use crate::settings::{
+    clear_active_transcription_operation, get_settings, is_transcription_preset_binding,
+    persistent_transcription_operation, resolve_transcription_preset,
+    set_active_transcription_operation, take_active_transcription_operation,
+    validate_preset_post_process_configuration, AppSettings, OverlayStyle,
+    TranscriptionOperationConfig, APPLE_INTELLIGENCE_PROVIDER_ID,
+};
 use crate::shortcut;
 use crate::tray::{set_tray_state, TrayIconState};
 use crate::utils::{
@@ -38,9 +44,14 @@ struct FinishGuard(AppHandle, Arc<TranscriptionManager>);
 impl Drop for FinishGuard {
     fn drop(&mut self) {
         self.1.maybe_unload_immediately("transcription session");
+
+        // The operation snapshot is taken out of shared handoff state before
+        // this async processing task starts. Do not clear that state here: a
+        // queued recording may be started immediately by ProcessingFinished.
         if let Some(c) = self.0.try_state::<TranscriptionCoordinator>() {
             c.notify_processing_finished();
         }
+
         // The pipeline just freed its large transient buffers (captured PCM,
         // WAV copy, engine scratch); hand the cached pages back to the OS so
         // they don't sit in malloc arenas until they get swapped out (#1792).
@@ -57,6 +68,7 @@ pub trait ShortcutAction: Send + Sync {
 // Transcribe Action
 struct TranscribeAction {
     post_process: bool,
+    preset_id: Option<String>,
 }
 
 /// Field name for structured output JSON schema
@@ -405,12 +417,10 @@ pub(crate) struct ProcessedTranscription {
 /// resolves it independently so it agrees with the language the transcription ran
 /// in, without threading a value through the pipeline.
 fn resolve_effective_language(app: &AppHandle, settings: &AppSettings) -> String {
-    let tm = app.state::<Arc<TranscriptionManager>>();
     let model_manager = app.state::<Arc<ModelManager>>();
-    let active_model = tm
-        .get_current_model()
-        .unwrap_or_else(|| settings.selected_model.clone());
-    match model_manager.get_model_info(&active_model) {
+    // Operation-owned snapshots pin the model that produced this transcription.
+    // Do not consult whichever model happens to be globally resident later.
+    match model_manager.get_model_info(&settings.selected_model) {
         Some(info) => crate::managers::model::effective_language(
             &settings.selected_language,
             &info.supported_languages,
@@ -420,12 +430,48 @@ fn resolve_effective_language(app: &AppHandle, settings: &AppSettings) -> String
     }
 }
 
-pub(crate) async fn process_transcription_output(
+fn validate_transcription_operation(
+    app: &AppHandle,
+    operation: &TranscriptionOperationConfig,
+) -> Result<(), String> {
+    let model_id = operation.settings.selected_model.trim();
+    if model_id.is_empty() {
+        return Err("No transcription model is selected".to_string());
+    }
+
+    let model_manager = app.state::<Arc<ModelManager>>();
+    let model = model_manager
+        .get_model_info(model_id)
+        .ok_or_else(|| format!("Transcription model '{}' is not available", model_id))?;
+    if !model.is_downloaded {
+        return Err(format!(
+            "Transcription model '{}' is not downloaded",
+            model_id
+        ));
+    }
+
+    // Presets promise a concrete post-processing workflow. Reject a missing or
+    // stale prompt instead of silently returning unprocessed text. Keep the
+    // legacy normal post-processing shortcut behavior unchanged.
+    if operation.preset_id.is_some() && operation.post_process {
+        validate_preset_post_process_configuration(
+            &operation.settings,
+            operation
+                .settings
+                .post_process_selected_prompt_id
+                .as_deref(),
+        )?;
+    }
+
+    Ok(())
+}
+
+pub(crate) async fn process_transcription_output_with_settings(
     app: &AppHandle,
     transcription: &str,
     post_process: bool,
+    settings: &AppSettings,
 ) -> ProcessedTranscription {
-    let settings = get_settings(app);
     let mut final_text = transcription.to_string();
     let mut post_processed_text: Option<String> = None;
     let mut post_process_prompt: Option<String> = None;
@@ -433,7 +479,7 @@ pub(crate) async fn process_transcription_output(
     // Resolve the language the transcription actually ran in (the persisted
     // intent coerced against the loaded model's capabilities) so OpenCC keys off
     // the effective language rather than a possibly-stale intent.
-    let effective_language = resolve_effective_language(app, &settings);
+    let effective_language = resolve_effective_language(app, settings);
     if let Some(converted_text) =
         maybe_convert_chinese_variant(&effective_language, transcription).await
     {
@@ -441,7 +487,7 @@ pub(crate) async fn process_transcription_output(
     }
 
     if post_process {
-        if let Some(processed_text) = post_process_transcription(&settings, &final_text).await {
+        if let Some(processed_text) = post_process_transcription(settings, &final_text).await {
             post_processed_text = Some(processed_text.clone());
             final_text = processed_text;
 
@@ -471,13 +517,44 @@ impl ShortcutAction for TranscribeAction {
         let start_time = Instant::now();
         debug!("TranscribeAction::start called for binding: {}", binding_id);
 
+        let persistent_settings = get_settings(app);
+        let operation = if let Some(preset_id) = &self.preset_id {
+            match resolve_transcription_preset(&persistent_settings, preset_id) {
+                Ok(config) => config,
+                Err(err) => {
+                    error!("Failed to resolve transcription preset: {}", err);
+                    let _ = app.emit("transcription-error", err);
+                    return;
+                }
+            }
+        } else {
+            persistent_transcription_operation(persistent_settings, self.post_process)
+        };
+
+        if let Err(err) = validate_transcription_operation(app, &operation) {
+            error!("Cannot start transcription operation: {}", err);
+            let _ = app.emit("transcription-error", err);
+            return;
+        }
+
+        if let (Some(name), Some(id)) = (&operation.preset_name, &operation.preset_id) {
+            debug!("Activated transcription preset '{}' ({})", name, id);
+        }
+
+        let settings = operation.settings.clone();
+        if let Err(err) = set_active_transcription_operation(app, operation) {
+            error!("Failed to store transcription operation: {}", err);
+            let _ = app.emit("transcription-error", err);
+            return;
+        }
+
         // Load model in the background
         let tm = app.state::<Arc<TranscriptionManager>>();
         let rm = app.state::<Arc<AudioRecordingManager>>();
 
         // Load ASR model and VAD model in parallel
         let kickoff_started = Instant::now();
-        tm.initiate_model_load();
+        tm.initiate_model_load_for(&settings.selected_model);
         let rm_clone = Arc::clone(&rm);
         std::thread::spawn(move || {
             if let Err(e) = rm_clone.preload_vad() {
@@ -493,7 +570,6 @@ impl ShortcutAction for TranscribeAction {
 
         // Get the microphone mode to determine audio feedback timing
         let plan_started = Instant::now();
-        let settings = get_settings(app);
         let is_always_on = settings.always_on_microphone;
 
         let selected_model_info = app
@@ -515,7 +591,7 @@ impl ShortcutAction for TranscribeAction {
             VadPolicy::Offline
         };
         if model_supports_streaming {
-            tm.start_stream();
+            tm.start_stream_with_settings(settings.clone());
         }
         let plan_elapsed = plan_started.elapsed();
 
@@ -604,6 +680,7 @@ impl ShortcutAction for TranscribeAction {
             // Starting failed (for example due to blocked microphone permissions).
             // Revert UI state so we don't stay stuck in the recording overlay.
             tm.cancel_stream();
+            clear_active_transcription_operation(app);
             utils::hide_recording_overlay(app);
             set_tray_state(app, TrayIconState::Idle);
             if let Some(err) = recording_error {
@@ -669,7 +746,15 @@ impl ShortcutAction for TranscribeAction {
         play_feedback_sound(app, SoundType::Stop);
 
         let binding_id = binding_id.to_string(); // Clone binding_id for the async task
-        let post_process = self.post_process;
+        let operation = take_active_transcription_operation(app).unwrap_or_else(|| {
+            warn!(
+                "Missing operation snapshot for '{}'; falling back to persistent settings",
+                binding_id
+            );
+            persistent_transcription_operation(get_settings(app), self.post_process)
+        });
+        let operation_settings = operation.settings;
+        let post_process = operation.post_process;
         let cancel_generation = rm.cancel_generation();
 
         tauri::async_runtime::spawn(async move {
@@ -717,17 +802,18 @@ impl ShortcutAction for TranscribeAction {
                     // running, finalize it and use its text (all audio was already
                     // fed to the stream); otherwise batch-transcribe the samples.
                     let transcription_time = Instant::now();
-                    let transcription_result = match tm.finalize_stream() {
-                        // A finalized stream with usable text wins. An empty result
-                        // (no active stream, produced nothing, or a finalize error
-                        // after the engine was returned) falls back to a full batch
-                        // transcription of the same audio. A finalize timeout is
-                        // surfaced instead — the worker may still hold the engine,
-                        // so a batch fallback would contend with it.
-                        Ok(Some(text)) if !text.trim().is_empty() => Ok(text),
-                        Ok(_) => tm.transcribe(samples),
-                        Err(err) => Err(err),
-                    };
+                    let transcription_result =
+                        match tm.finalize_stream_with_settings(&operation_settings) {
+                            // A finalized stream with usable text wins. An empty result
+                            // (no active stream, produced nothing, or a finalize error
+                            // after the engine was returned) falls back to a full batch
+                            // transcription of the same audio. A finalize timeout is
+                            // surfaced instead — the worker may still hold the engine,
+                            // so a batch fallback would contend with it.
+                            Ok(Some(text)) if !text.trim().is_empty() => Ok(text),
+                            Ok(_) => tm.transcribe_with_settings(samples, &operation_settings),
+                            Err(err) => Err(err),
+                        };
 
                     // Await WAV save and verify
                     let wav_saved = match wav_handle.await {
@@ -776,7 +862,12 @@ impl ShortcutAction for TranscribeAction {
                                 }
                             }
                             let Some(processed) = complete_unless_cancelled(
-                                process_transcription_output(&ah, &transcription, post_process),
+                                process_transcription_output_with_settings(
+                                    &ah,
+                                    &transcription,
+                                    post_process,
+                                    &operation_settings,
+                                ),
                                 || rm.was_cancelled_since(cancel_generation),
                             )
                             .await
@@ -896,6 +987,7 @@ struct CancelAction;
 impl ShortcutAction for CancelAction {
     fn start(&self, app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {
         utils::cancel_current_operation(app);
+        clear_active_transcription_operation(app);
     }
 
     fn stop(&self, _app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {
@@ -933,11 +1025,15 @@ pub static ACTION_MAP: Lazy<HashMap<String, Arc<dyn ShortcutAction>>> = Lazy::ne
         "transcribe".to_string(),
         Arc::new(TranscribeAction {
             post_process: false,
+            preset_id: None,
         }) as Arc<dyn ShortcutAction>,
     );
     map.insert(
         "transcribe_with_post_process".to_string(),
-        Arc::new(TranscribeAction { post_process: true }) as Arc<dyn ShortcutAction>,
+        Arc::new(TranscribeAction {
+            post_process: true,
+            preset_id: None,
+        }) as Arc<dyn ShortcutAction>,
     );
     map.insert(
         "cancel".to_string(),
@@ -949,6 +1045,18 @@ pub static ACTION_MAP: Lazy<HashMap<String, Arc<dyn ShortcutAction>>> = Lazy::ne
     );
     map
 });
+
+/// Resolve a shortcut action, including the dynamic preset bindings.
+pub fn resolve_action(binding_id: &str) -> Option<Arc<dyn ShortcutAction>> {
+    if is_transcription_preset_binding(binding_id) {
+        return Some(Arc::new(TranscribeAction {
+            post_process: false,
+            preset_id: Some(binding_id.to_string()),
+        }));
+    }
+
+    ACTION_MAP.get(binding_id).cloned()
+}
 
 #[cfg(test)]
 mod tests {

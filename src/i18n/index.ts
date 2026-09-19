@@ -91,6 +91,9 @@ i18n.use(initReactI18next).init({
   resources,
   lng: "en",
   fallbackLng: "en",
+  // Non-English resources may use null for untranslated keys. Treat null as
+  // missing so i18next falls back to the English reference string.
+  returnNull: false,
   interpolation: {
     escapeValue: false, // React already escapes values
   },

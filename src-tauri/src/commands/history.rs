@@ -1,4 +1,4 @@
-use crate::actions::process_transcription_output;
+use crate::actions::process_transcription_output_with_settings;
 use crate::managers::{
     history::{HistoryManager, PaginatedHistory},
     transcription::TranscriptionManager,
@@ -81,20 +81,32 @@ pub async fn retry_history_entry_transcription(
         return Err("Recording has no audio samples".to_string());
     }
 
-    transcription_manager.initiate_model_load();
+    // History retry is a normal non-preset operation. Pin one persistent
+    // settings snapshot and explicitly request its selected model so a model
+    // left resident by a previous preset can never bleed into this retry.
+    let operation_settings = crate::settings::get_settings(&app);
+    transcription_manager.initiate_model_load_for(&operation_settings.selected_model);
 
     let tm = Arc::clone(&transcription_manager);
-    let transcription = tauri::async_runtime::spawn_blocking(move || tm.transcribe(samples))
-        .await
-        .map_err(|e| format!("Transcription task panicked: {}", e))?
-        .map_err(|e| e.to_string())?;
+    let transcription_settings = operation_settings.clone();
+    let transcription = tauri::async_runtime::spawn_blocking(move || {
+        tm.transcribe_with_settings(samples, &transcription_settings)
+    })
+    .await
+    .map_err(|e| format!("Transcription task panicked: {}", e))?
+    .map_err(|e| e.to_string())?;
 
     if transcription.is_empty() {
         return Err("Recording contains no speech".to_string());
     }
 
-    let processed =
-        process_transcription_output(&app, &transcription, entry.post_process_requested).await;
+    let processed = process_transcription_output_with_settings(
+        &app,
+        &transcription,
+        entry.post_process_requested,
+        &operation_settings,
+    )
+    .await;
     history_manager
         .update_transcription(
             id,
