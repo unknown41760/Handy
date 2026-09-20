@@ -789,6 +789,21 @@ pub(crate) fn normalize_transcription_presets(settings: &mut AppSettings) -> boo
         .retain(|id, _| !is_transcription_preset_binding(id) || preset_ids.contains(id));
     changed |= settings.bindings.len() != binding_count;
 
+    // Persisted bindings are keyed by ID, while event dispatch/bookkeeping use
+    // `ShortcutBinding.id`. Keep both representations aligned for every
+    // binding this version actually understands; leave unknown/future entries
+    // untouched for forward compatibility.
+    for (id, binding) in &mut settings.bindings {
+        let known_static = matches!(
+            id.as_str(),
+            "transcribe" | "transcribe_with_post_process" | "cancel"
+        );
+        if (known_static || preset_ids.contains(id)) && binding.id != *id {
+            binding.id = id.clone();
+            changed = true;
+        }
+    }
+
     for preset in &mut settings.transcription_presets {
         if preset.enabled && !settings.bindings.contains_key(&preset.id) {
             preset.enabled = false;
@@ -1789,7 +1804,7 @@ mod tests {
         settings.bindings.insert(
             "preset_duplicate".to_string(),
             ShortcutBinding {
-                id: "preset_duplicate".to_string(),
+                id: "transcribe".to_string(),
                 name: "Duplicate shortcut".to_string(),
                 description: "Duplicate shortcut".to_string(),
                 default_binding: "ctrl+alt+9".to_string(),
@@ -1821,12 +1836,28 @@ mod tests {
             .unwrap();
         assert_eq!(first.id, "preset_duplicate");
         assert!(first.enabled);
+        assert_eq!(settings.bindings["preset_duplicate"].id, "preset_duplicate");
         assert!(settings
             .transcription_presets
             .iter()
             .filter(|preset| preset.name != "First")
             .all(|preset| !preset.enabled));
 
+        assert!(!normalize_transcription_presets(&mut settings));
+    }
+
+    #[test]
+    fn preset_normalization_preserves_more_than_creation_limit_and_is_idempotent() {
+        let mut settings = get_default_settings();
+        settings.transcription_presets = (0..(MAX_TRANSCRIPTION_PRESETS + 2))
+            .map(|index| test_preset(&format!("preset_{index}"), &format!("Preset {index}")))
+            .collect();
+
+        assert!(!normalize_transcription_presets(&mut settings));
+        assert_eq!(
+            settings.transcription_presets.len(),
+            MAX_TRANSCRIPTION_PRESETS + 2
+        );
         assert!(!normalize_transcription_presets(&mut settings));
     }
 

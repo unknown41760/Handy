@@ -59,6 +59,38 @@ export const HandyKeysShortcutInput: React.FC<HandyKeysShortcutInputProps> = ({
 
   const bindings = getSetting("bindings") || {};
 
+  // Closing the native window hides it without unmounting React. The backend
+  // stops capture/restores shortcuts first; clear local recording state when
+  // that cancellation event arrives so hidden global capture cannot continue.
+  useEffect(() => {
+    let active = true;
+    let unlistenClose: (() => void) | null = null;
+
+    listen("shortcut-capture-cancelled", () => {
+      if (unlistenRef.current) {
+        unlistenRef.current();
+        unlistenRef.current = null;
+      }
+      setIsRecording(false);
+      setCurrentKeys("");
+      currentKeysRef.current = "";
+      keyedShortcutRef.current = "";
+      modifierOnlyShortcutRef.current = "";
+      setOriginalBinding("");
+    }).then((stopListening) => {
+      if (active) {
+        unlistenClose = stopListening;
+      } else {
+        stopListening();
+      }
+    });
+
+    return () => {
+      active = false;
+      unlistenClose?.();
+    };
+  }, []);
+
   // Handle cancellation
   const cancelRecording = useCallback(async () => {
     if (!isRecording) return;
@@ -69,8 +101,17 @@ export const HandyKeysShortcutInput: React.FC<HandyKeysShortcutInputProps> = ({
       unlistenRef.current = null;
     }
 
-    // Stop backend recording
-    await commands.stopHandyKeysRecording().catch(console.error);
+    // Stop backend recording and surface any shortcut-restoration failure.
+    try {
+      const stopResult = await commands.stopHandyKeysRecording();
+      if (stopResult.status === "error") {
+        console.error("Failed to stop shortcut recording:", stopResult.error);
+        toast.error(t("settings.general.shortcut.errors.restore"));
+      }
+    } catch (error) {
+      console.error("Failed to stop shortcut recording:", error);
+      toast.error(t("settings.general.shortcut.errors.restore"));
+    }
 
     // Restore original binding
     if (originalBinding) {
@@ -125,7 +166,16 @@ export const HandyKeysShortcutInput: React.FC<HandyKeysShortcutInputProps> = ({
           unlistenRef.current();
           unlistenRef.current = null;
         }
-        await commands.stopHandyKeysRecording().catch(console.error);
+        try {
+          const stopResult = await commands.stopHandyKeysRecording();
+          if (stopResult.status === "error") {
+            console.error("Failed to restore shortcuts:", stopResult.error);
+            toast.error(t("settings.general.shortcut.errors.restore"));
+          }
+        } catch (error) {
+          console.error("Failed to stop shortcut recording:", error);
+          toast.error(t("settings.general.shortcut.errors.restore"));
+        }
         setIsRecording(false);
         setCurrentKeys("");
         currentKeysRef.current = "";

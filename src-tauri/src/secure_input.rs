@@ -483,22 +483,48 @@ mod imp {
                 crate::shortcut::tauri_impl::unregister_shortcut(app, binding.clone())
             {
                 let mut restore_failures = Vec::new();
+                let mut failed_restore_ids = std::collections::HashSet::new();
                 for removed_binding in removed.iter().rev() {
                     if let Err(restore_error) =
                         crate::shortcut::tauri_impl::register_shortcut(app, removed_binding.clone())
                     {
+                        failed_restore_ids.insert(removed_binding.id.clone());
                         restore_failures.push(format!("{}: {}", removed_binding.id, restore_error));
                     }
                 }
-                if !restore_failures.is_empty() {
-                    error!(
-                        "SecureInput fallback rollback after backend-switch suspension failed: {}",
-                        restore_failures.join("; ")
-                    );
+                if !failed_restore_ids.is_empty() {
+                    let mut reconciled = previous.clone();
+                    reconciled
+                        .registered
+                        .retain(|entry| !failed_restore_ids.contains(&entry.id));
+                    reconciled
+                        .covered
+                        .retain(|id| !failed_restore_ids.contains(id));
+                    reconciled
+                        .degraded
+                        .retain(|id| !failed_restore_ids.contains(id));
+                    for id in &failed_restore_ids {
+                        if !reconciled.uncovered.contains(id) {
+                            reconciled.uncovered.push(id.clone());
+                        }
+                    }
+                    *state
+                        .fallback
+                        .lock()
+                        .map_err(|_| "Failed to lock Secure Input fallback state".to_string())? =
+                        reconciled;
                 }
-                return Err(format!(
+                let primary = format!(
                     "Failed to suspend Secure Input fallback shortcut '{}': {}",
                     binding.id, error
+                );
+                if restore_failures.is_empty() {
+                    return Err(primary);
+                }
+                return Err(format!(
+                    "{}; fallback rollback incomplete: {}",
+                    primary,
+                    restore_failures.join("; ")
                 ));
             }
             removed.push(binding.clone());
@@ -574,9 +600,13 @@ mod imp {
         for binding in stale {
             if let Err(e) = crate::shortcut::tauri_impl::unregister_shortcut(app, binding.clone()) {
                 warn!(
-                    "SecureInput fallback: failed to unregister '{}': {}",
+                    "SecureInput fallback: failed to unregister '{}': {}; keeping it tracked for retry",
                     binding.current_binding, e
                 );
+                if !next.uncovered.contains(&binding.id) {
+                    next.uncovered.push(binding.id.clone());
+                }
+                next.registered.push(binding);
             }
         }
 

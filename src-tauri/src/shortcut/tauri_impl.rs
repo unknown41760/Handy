@@ -130,6 +130,22 @@ pub fn register_shortcut(app: &AppHandle, binding: ShortcutBinding) -> Result<()
     Ok(())
 }
 
+/// Ensure a shortcut is registered, treating an already-present app
+/// registration as success. This is used when restoring bindings after
+/// shortcut capture, where the just-committed binding may already be live.
+pub fn ensure_shortcut_registered(app: &AppHandle, binding: ShortcutBinding) -> Result<(), String> {
+    let shortcut = binding.current_binding.parse::<Shortcut>().map_err(|e| {
+        format!(
+            "Failed to parse shortcut '{}' while restoring: {}",
+            binding.current_binding, e
+        )
+    })?;
+    if app.global_shortcut().is_registered(shortcut) {
+        return Ok(());
+    }
+    register_shortcut(app, binding)
+}
+
 /// Unregister a shortcut from Tauri's global-shortcut plugin
 pub fn unregister_shortcut(app: &AppHandle, binding: ShortcutBinding) -> Result<(), String> {
     let shortcut = match binding.current_binding.parse::<Shortcut>() {
@@ -143,6 +159,14 @@ pub fn unregister_shortcut(app: &AppHandle, binding: ShortcutBinding) -> Result<
             return Err(error_msg);
         }
     };
+
+    // Shortcut capture suspends registrations before `change_binding` runs.
+    // Treat an already-absent app registration as successfully unregistered,
+    // while still propagating a real native teardown failure for a binding
+    // that is currently registered.
+    if !app.global_shortcut().is_registered(shortcut) {
+        return Ok(());
+    }
 
     app.global_shortcut().unregister(shortcut).map_err(|e| {
         let error_msg = format!(

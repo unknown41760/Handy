@@ -1059,6 +1059,14 @@ pub fn run(cli_args: CliArgs) {
         .on_window_event(|window, event| match event {
             tauri::WindowEvent::CloseRequested { api, .. } => {
                 api.prevent_close();
+                if let Err(error) =
+                    crate::shortcut::cancel_shortcut_capture_for_window_hide(window.app_handle())
+                {
+                    log::warn!(
+                        "Failed to fully cancel shortcut capture before hiding window: {}",
+                        error
+                    );
+                }
                 let _res = window.hide();
 
                 #[cfg(target_os = "macos")]

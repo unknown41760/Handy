@@ -11,6 +11,7 @@ import { SettingContainer } from "../ui/SettingContainer";
 import { useSettings } from "../../hooks/useSettings";
 import { useOsType } from "../../hooks/useOsType";
 import { commands } from "@/bindings";
+import { listen } from "@tauri-apps/api/event";
 import { toast } from "sonner";
 
 interface GlobalShortcutInputProps {
@@ -45,6 +46,32 @@ export const GlobalShortcutInput: React.FC<GlobalShortcutInputProps> = ({
   const osType = useOsType();
 
   const bindings = getSetting("bindings") || {};
+
+  // The native close handler hides rather than destroys the main window.
+  // Backend cleanup runs before hide; mirror that cancellation locally so a
+  // reopened settings window never remains in shortcut-capture mode.
+  useEffect(() => {
+    let active = true;
+    let unlisten: (() => void) | null = null;
+
+    listen("shortcut-capture-cancelled", () => {
+      setEditingShortcutId(null);
+      setKeyPressed([]);
+      setRecordedKeys([]);
+      setOriginalBinding("");
+    }).then((stopListening) => {
+      if (active) {
+        unlisten = stopListening;
+      } else {
+        stopListening();
+      }
+    });
+
+    return () => {
+      active = false;
+      unlisten?.();
+    };
+  }, []);
 
   useEffect(() => {
     // Only add event listeners when we're in editing mode
@@ -131,9 +158,11 @@ export const GlobalShortcutInput: React.FC<GlobalShortcutInputProps> = ({
             }
           }
 
-          // Re-register all bindings (the one just committed is already
-          // registered; re-registering it fails cleanly and is ignored)
-          await commands.resumeAllBindings().catch(console.error);
+          const resumeResult = await commands.resumeAllBindings();
+          if (resumeResult.status === "error") {
+            console.error("Failed to restore shortcuts:", resumeResult.error);
+            toast.error(t("settings.general.shortcut.errors.restore"));
+          }
 
           // Exit editing mode and reset states
           setEditingShortcutId(null);
@@ -158,7 +187,11 @@ export const GlobalShortcutInput: React.FC<GlobalShortcutInputProps> = ({
             toast.error(t("settings.general.shortcut.errors.restore"));
           }
         }
-        await commands.resumeAllBindings().catch(console.error);
+        const resumeResult = await commands.resumeAllBindings();
+        if (resumeResult.status === "error") {
+          console.error("Failed to restore shortcuts:", resumeResult.error);
+          toast.error(t("settings.general.shortcut.errors.restore"));
+        }
         setEditingShortcutId(null);
         setKeyPressed([]);
         setRecordedKeys([]);

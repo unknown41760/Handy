@@ -109,17 +109,73 @@ fn reconcile_use_current_presets_for_model(
     changed
 }
 
-fn restore_preset_shortcuts(app: &AppHandle, bindings: &[crate::settings::ShortcutBinding]) {
-    for binding in bindings {
-        if let Err(error) = crate::shortcut::register_shortcut(app, binding.clone()) {
-            log::error!(
-                "Failed to restore preset shortcut '{}' after model deletion rollback: {}",
-                binding.id,
-                error
+pub fn reconcile_preset_capabilities_on_startup(app: &AppHandle) -> bool {
+    let model_manager = app.state::<Arc<ModelManager>>();
+    let mut settings = get_settings(app);
+    let selected_model = settings.selected_model.clone();
+    let mut changed = false;
+
+    for preset in &mut settings.transcription_presets {
+        let effective_model_id = if preset.model_id.trim().is_empty() {
+            selected_model.as_str()
+        } else {
+            preset.model_id.as_str()
+        };
+        if effective_model_id.is_empty() {
+            continue;
+        }
+        if let Some(model) = model_manager.get_model_info(effective_model_id) {
+            changed |= reconcile_preset_model_capabilities(
+                preset,
+                &model.supported_languages,
+                model.supports_language_detection,
+                model.supports_translation,
             );
         }
     }
+
+    if changed {
+        write_settings(app, settings);
+        let _ = app.emit(
+            "settings-changed",
+            serde_json::json!({ "setting": "transcription_presets" }),
+        );
+    }
+
+    changed
+}
+
+fn restore_preset_shortcuts(
+    app: &AppHandle,
+    bindings: &[crate::settings::ShortcutBinding],
+) -> Result<(), String> {
+    let mut failures = Vec::new();
+    for binding in bindings {
+        if let Err(error) = crate::shortcut::register_shortcut(app, binding.clone()) {
+            failures.push(format!("{}: {}", binding.id, error));
+        }
+    }
     crate::secure_input::reconcile_fallback(app);
+
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("; "))
+    }
+}
+
+fn model_delete_error_with_rollback(
+    app: &AppHandle,
+    bindings: &[crate::settings::ShortcutBinding],
+    primary: String,
+) -> String {
+    match restore_preset_shortcuts(app, bindings) {
+        Ok(()) => primary,
+        Err(restore_error) => format!(
+            "{}; preset-shortcut rollback incomplete: {}",
+            primary, restore_error
+        ),
+    }
 }
 
 #[tauri::command]
@@ -153,10 +209,13 @@ pub async fn delete_model(
     let mut unregistered = Vec::new();
     for binding in &bindings_to_unregister {
         if let Err(error) = crate::shortcut::unregister_shortcut(&app_handle, binding.clone()) {
-            restore_preset_shortcuts(&app_handle, &unregistered);
-            return Err(format!(
-                "Failed to unregister preset shortcut '{}' before deleting model: {}",
-                binding.id, error
+            return Err(model_delete_error_with_rollback(
+                &app_handle,
+                &unregistered,
+                format!(
+                    "Failed to unregister preset shortcut '{}' before deleting model: {}",
+                    binding.id, error
+                ),
             ));
         }
         unregistered.push(binding.clone());
@@ -164,14 +223,20 @@ pub async fn delete_model(
 
     if deleting_loaded_model {
         if let Err(error) = transcription_manager.unload_model() {
-            restore_preset_shortcuts(&app_handle, &unregistered);
-            return Err(format!("Failed to unload model: {}", error));
+            return Err(model_delete_error_with_rollback(
+                &app_handle,
+                &unregistered,
+                format!("Failed to unload model: {}", error),
+            ));
         }
     }
 
     if let Err(error) = model_manager.delete_model(&model_id) {
-        restore_preset_shortcuts(&app_handle, &unregistered);
-        return Err(error.to_string());
+        return Err(model_delete_error_with_rollback(
+            &app_handle,
+            &unregistered,
+            error.to_string(),
+        ));
     }
 
     write_settings(&app_handle, next_settings);

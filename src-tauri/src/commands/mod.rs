@@ -184,8 +184,14 @@ pub fn initialize_shortcuts(app: AppHandle) -> Result<(), String> {
         return Ok(());
     }
 
-    // Initialize shortcuts
-    crate::shortcut::init_shortcuts(&app);
+    // Model metadata is available by this point. Repair any persisted preset
+    // capability state left by an older/corrupted store before shortcuts and
+    // the settings UI begin using it.
+    models::reconcile_preset_capabilities_on_startup(&app);
+
+    // Initialize shortcuts. Individual HandyKeys binding failures are surfaced
+    // instead of silently persisting a backend switch to Tauri.
+    crate::shortcut::init_shortcuts(&app)?;
 
     // Mark as initialized before reconciling the macOS Secure Input fallback.
     app.manage(ShortcutsInitialized);
