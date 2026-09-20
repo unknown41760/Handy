@@ -29,6 +29,7 @@ import { WhatsNewGate } from "./components/whats-new";
 import { useSettings } from "./hooks/useSettings";
 import { useSettingsStore } from "./stores/settingsStore";
 import { commands } from "@/bindings";
+import { initializeInputRuntime } from "@/lib/utils/initializeInputRuntime";
 import { getLanguageDirection, initializeRTL } from "@/lib/utils/rtl";
 
 type OnboardingStep = "accessibility" | "model" | "done";
@@ -99,20 +100,52 @@ function App() {
     initializeRTL(i18n.language);
   }, [i18n.language]);
 
-  // Initialize Enigo, shortcuts, and refresh audio devices when main app loads
+  const postOnboardingInitRunning = useRef(false);
+  const [postOnboardingInitAttempt, setPostOnboardingInitAttempt] = useState(0);
+
+  // Initialize Enigo and shortcuts only after their generated Result values
+  // report success. Failed initialization stays retryable instead of being
+  // permanently marked complete for the rest of the session.
   useEffect(() => {
-    if (onboardingStep === "done" && !hasCompletedPostOnboardingInit.current) {
-      hasCompletedPostOnboardingInit.current = true;
-      Promise.all([
-        commands.initializeEnigo(),
-        commands.initializeShortcuts(),
-      ]).catch((e) => {
-        console.warn("Failed to initialize:", e);
-      });
-      refreshAudioDevices();
-      refreshOutputDevices();
+    if (
+      onboardingStep !== "done" ||
+      hasCompletedPostOnboardingInit.current ||
+      postOnboardingInitRunning.current
+    ) {
+      return;
     }
-  }, [onboardingStep, refreshAudioDevices, refreshOutputDevices]);
+
+    postOnboardingInitRunning.current = true;
+    void initializeInputRuntime()
+      .then(() => {
+        hasCompletedPostOnboardingInit.current = true;
+      })
+      .catch((error) => {
+        console.warn("Failed to initialize input runtime:", error);
+        toast.error(
+          t("errors.shortcutInitializationFailed", { error: String(error) }),
+          {
+            action: {
+              label: t("common.retry"),
+              onClick: () =>
+                setPostOnboardingInitAttempt((attempt) => attempt + 1),
+            },
+          },
+        );
+      })
+      .finally(() => {
+        postOnboardingInitRunning.current = false;
+      });
+
+    void refreshAudioDevices();
+    void refreshOutputDevices();
+  }, [
+    onboardingStep,
+    postOnboardingInitAttempt,
+    refreshAudioDevices,
+    refreshOutputDevices,
+    t,
+  ]);
 
   // Handle keyboard shortcuts for debug mode toggle
   useEffect(() => {

@@ -698,6 +698,7 @@
     "open": "Öppna",
     "copy": "Kopiera",
     "clear": "Rensa",
+    "retry": null,
     "noOptionsFound": "Inga alternativ hittades"
   },
   "accessibility": {
@@ -705,6 +706,7 @@
     "openSettings": "Öppna systeminställningar"
   },
   "errors": {
+    "shortcutInitializationFailed": null,
     "loadDirectory": "Fel vid laddning av mapp: {{error}}",
     "micPermissionDeniedTitle": "Mikrofonåtkomst nekad",
     "micPermissionDenied": {

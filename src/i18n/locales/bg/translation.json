@@ -698,6 +698,7 @@
     "open": "Отваряне",
     "copy": "Копиране",
     "clear": "Изчистване",
+    "retry": null,
     "noOptionsFound": "Няма намерени опции"
   },
   "accessibility": {
@@ -705,6 +706,7 @@
     "openSettings": "Отваряне на системните настройки"
   },
   "errors": {
+    "shortcutInitializationFailed": null,
     "loadDirectory": "Грешка при зареждане на папката: {{error}}",
     "micPermissionDeniedTitle": "Достъпът до микрофона е отказан",
     "micPermissionDenied": {

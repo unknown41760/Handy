@@ -701,6 +701,7 @@
     "open": "Openen",
     "copy": "Kopiëren",
     "clear": "Wissen",
+    "retry": null,
     "noOptionsFound": "Geen opties gevonden"
   },
   "accessibility": {
@@ -708,6 +709,7 @@
     "openSettings": "Systeeminstellingen openen"
   },
   "errors": {
+    "shortcutInitializationFailed": null,
     "loadDirectory": "Fout bij laden van map: {{error}}",
     "micPermissionDeniedTitle": "Microfoontoegang geweigerd",
     "micPermissionDenied": {

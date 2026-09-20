@@ -34,6 +34,14 @@ pub fn handle_shortcut_event(
 ) {
     let settings = get_settings(app);
 
+    // A stale native registration must never bypass the global AI
+    // post-processing master/privacy switch. This also protects against rare
+    // teardown failures where the OS still delivers the old shortcut.
+    if binding_id == "transcribe_with_post_process" && !settings.post_process_enabled {
+        warn!("Ignoring disabled post-processing shortcut event");
+        return;
+    }
+
     // Transcribe bindings are handled by the coordinator.
     if is_transcribe_binding(binding_id) {
         if let Some(coordinator) = app.try_state::<TranscriptionCoordinator>() {

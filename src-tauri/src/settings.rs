@@ -1384,11 +1384,12 @@ pub fn persistent_transcription_operation(
     settings: AppSettings,
     post_process: bool,
 ) -> TranscriptionOperationConfig {
+    let effective_post_process = post_process && settings.post_process_enabled;
     TranscriptionOperationConfig {
         preset_id: None,
         preset_name: None,
         settings,
-        post_process,
+        post_process: effective_post_process,
     }
 }
 
@@ -1896,6 +1897,16 @@ mod tests {
         let normal = persistent_transcription_operation(settings.clone(), false);
         assert_eq!(normal.settings.selected_model, "normal-model");
         assert_eq!(normal.settings.selected_language, "en");
+    }
+
+    #[test]
+    fn global_post_process_switch_gates_static_post_process_operation() {
+        let mut settings = get_default_settings();
+        settings.post_process_enabled = false;
+        assert!(!persistent_transcription_operation(settings.clone(), true).post_process);
+
+        settings.post_process_enabled = true;
+        assert!(persistent_transcription_operation(settings, true).post_process);
     }
 
     #[test]

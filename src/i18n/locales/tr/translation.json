@@ -698,6 +698,7 @@
     "open": "Aç",
     "copy": "Kopyala",
     "clear": "Temizle",
+    "retry": null,
     "noOptionsFound": "Seçenek bulunamadı"
   },
   "accessibility": {
@@ -705,6 +706,7 @@
     "openSettings": "Sistem Ayarlarını Aç"
   },
   "errors": {
+    "shortcutInitializationFailed": null,
     "loadDirectory": "Dizin yüklenirken hata oluştu: {{error}}",
     "micPermissionDeniedTitle": "Mikrofon erişimi reddedildi",
     "micPermissionDenied": {

@@ -701,6 +701,7 @@
     "open": "Open",
     "copy": "Copy",
     "clear": "Clear",
+    "retry": "Retry",
     "noOptionsFound": "No options found"
   },
   "accessibility": {
@@ -708,6 +709,7 @@
     "openSettings": "Open System Settings"
   },
   "errors": {
+    "shortcutInitializationFailed": "Failed to initialize keyboard shortcuts. {{error}}",
     "loadDirectory": "Error loading directory: {{error}}",
     "micPermissionDeniedTitle": "Microphone Access Denied",
     "micPermissionDenied": {

@@ -9,6 +9,7 @@ import {
 } from "tauri-plugin-macos-permissions-api";
 import { toast } from "sonner";
 import { commands } from "@/bindings";
+import { initializeInputRuntime } from "@/lib/utils/initializeInputRuntime";
 import { useSettingsStore } from "@/stores/settingsStore";
 import HandyTextLogo from "../icons/HandyTextLogo";
 import { Keyboard, Mic, Check, Loader2 } from "lucide-react";
@@ -65,6 +66,17 @@ const AccessibilityOnboarding: React.FC<AccessibilityOnboardingProps> = ({
     timeoutRef.current = setTimeout(() => onComplete(), 300);
   }, [onComplete, refreshAudioDevices, refreshOutputDevices]);
 
+  const initializeAfterPermissionGrant = useCallback(async () => {
+    try {
+      await initializeInputRuntime();
+    } catch (error) {
+      console.warn("Failed to initialize after permission grant:", error);
+      toast.error(
+        t("errors.shortcutInitializationFailed", { error: String(error) }),
+      );
+    }
+  }, [t]);
+
   const hasWindowsMicrophoneAccess = useCallback(async (): Promise<boolean> => {
     const microphoneStatus =
       await commands.getWindowsMicrophonePermissionStatus();
@@ -112,16 +124,11 @@ const AccessibilityOnboarding: React.FC<AccessibilityOnboardingProps> = ({
             checkMicrophonePermission(),
           ]);
 
-          // If accessibility is granted, initialize Enigo and shortcuts
+          // If accessibility is granted, initialize input services and
+          // explicitly consume the generated Result values. App startup will
+          // retry if this attempt still fails.
           if (accessibilityGranted) {
-            try {
-              await Promise.all([
-                commands.initializeEnigo(),
-                commands.initializeShortcuts(),
-              ]);
-            } catch (e) {
-              console.warn("Failed to initialize after permission grant:", e);
-            }
+            await initializeAfterPermissionGrant();
           }
 
           const newState: PermissionsState = {
@@ -168,7 +175,14 @@ const AccessibilityOnboarding: React.FC<AccessibilityOnboardingProps> = ({
     };
 
     checkInitial();
-  }, [completeOnboarding, hasWindowsMicrophoneAccess, onComplete, preview, t]);
+  }, [
+    completeOnboarding,
+    hasWindowsMicrophoneAccess,
+    initializeAfterPermissionGrant,
+    onComplete,
+    preview,
+    t,
+  ]);
 
   // Polling for permissions after user clicks a button
   const startPolling = useCallback(() => {
@@ -204,13 +218,9 @@ const AccessibilityOnboarding: React.FC<AccessibilityOnboardingProps> = ({
 
           if (accessibilityGranted && prev.accessibility !== "granted") {
             newState.accessibility = "granted";
-            // Initialize Enigo and shortcuts when accessibility is granted
-            Promise.all([
-              commands.initializeEnigo(),
-              commands.initializeShortcuts(),
-            ]).catch((e) => {
-              console.warn("Failed to initialize after permission grant:", e);
-            });
+            // Initialize input services when accessibility is granted. The
+            // helper turns generated Result errors into a rejected promise.
+            void initializeAfterPermissionGrant();
           }
 
           if (microphoneGranted && prev.microphone !== "granted") {
@@ -245,7 +255,13 @@ const AccessibilityOnboarding: React.FC<AccessibilityOnboardingProps> = ({
         }
       }
     }, 1000);
-  }, [completeOnboarding, hasWindowsMicrophoneAccess, permissionPlatform, t]);
+  }, [
+    completeOnboarding,
+    hasWindowsMicrophoneAccess,
+    initializeAfterPermissionGrant,
+    permissionPlatform,
+    t,
+  ]);
 
   // Cleanup polling and timeouts on unmount
   useEffect(() => {

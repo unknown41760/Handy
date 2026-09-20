@@ -698,6 +698,7 @@
     "open": "Mở",
     "copy": "Sao chép",
     "clear": "Xóa",
+    "retry": null,
     "noOptionsFound": "Không tìm thấy tùy chọn"
   },
   "accessibility": {
@@ -705,6 +706,7 @@
     "openSettings": "Mở Cài đặt Hệ thống"
   },
   "errors": {
+    "shortcutInitializationFailed": null,
     "loadDirectory": "Lỗi khi tải thư mục: {{error}}",
     "micPermissionDeniedTitle": "Quyền truy cập micrô bị từ chối",
     "micPermissionDenied": {

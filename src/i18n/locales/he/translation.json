@@ -698,6 +698,7 @@
     "open": "פתח",
     "copy": "העתק",
     "clear": "נקה",
+    "retry": null,
     "noOptionsFound": "לא נמצאו אפשרויות"
   },
   "accessibility": {
@@ -705,6 +706,7 @@
     "openSettings": "פתח את הגדרות המערכת"
   },
   "errors": {
+    "shortcutInitializationFailed": null,
     "loadDirectory": "שגיאה בטעינת תיקייה: {{error}}",
     "micPermissionDeniedTitle": "הגישה למיקרופון נדחתה",
     "micPermissionDenied": {

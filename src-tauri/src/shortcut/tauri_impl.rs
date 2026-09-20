@@ -13,9 +13,12 @@ use crate::settings::{self, ShortcutBinding};
 
 use super::handler::handle_shortcut_event;
 
-/// Initialize shortcuts using Tauri's global-shortcut plugin
-pub fn init_shortcuts(app: &AppHandle) {
+/// Initialize shortcuts using Tauri's global-shortcut plugin. Startup is
+/// transactional: a partial native registration set is rolled back and the
+/// caller is told initialization did not complete.
+pub fn init_shortcuts(app: &AppHandle) -> Result<(), String> {
     let user_settings = settings::load_or_create_app_settings(app);
+    let mut registered: Vec<ShortcutBinding> = Vec::new();
 
     for (id, binding) in &user_settings.bindings {
         if id == "cancel" {
@@ -28,10 +31,31 @@ pub fn init_shortcuts(app: &AppHandle) {
             continue;
         }
 
-        if let Err(e) = register_shortcut(app, binding.clone()) {
-            error!("Failed to register shortcut {} during init: {}", id, e);
+        if let Err(error) = register_shortcut(app, binding.clone()) {
+            let mut rollback_failures = Vec::new();
+            for registered_binding in registered.iter().rev() {
+                if let Err(rollback_error) = unregister_shortcut(app, registered_binding.clone()) {
+                    rollback_failures
+                        .push(format!("{}: {}", registered_binding.id, rollback_error));
+                }
+            }
+
+            let mut message = format!(
+                "Failed to register Tauri shortcut {} during init: {}",
+                id, error
+            );
+            if !rollback_failures.is_empty() {
+                message.push_str(&format!(
+                    "; rollback incomplete: {}",
+                    rollback_failures.join("; ")
+                ));
+            }
+            return Err(message);
         }
+        registered.push(binding.clone());
     }
+
+    Ok(())
 }
 
 /// Validate a shortcut string for the Tauri global-shortcut implementation.

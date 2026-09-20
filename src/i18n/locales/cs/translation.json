@@ -698,6 +698,7 @@
     "open": "Otevřít",
     "copy": "Kopírovat",
     "clear": "Vymazat",
+    "retry": null,
     "noOptionsFound": "Nenalezeny žádné možnosti"
   },
   "accessibility": {
@@ -705,6 +706,7 @@
     "openSettings": "Otevřít Nastavení systému"
   },
   "errors": {
+    "shortcutInitializationFailed": null,
     "loadDirectory": "Chyba při načítání adresáře: {{error}}",
     "micPermissionDeniedTitle": "Přístup k mikrofonu byl odepřen",
     "micPermissionDenied": {

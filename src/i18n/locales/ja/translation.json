@@ -698,6 +698,7 @@
     "open": "開く",
     "copy": "コピー",
     "clear": "クリア",
+    "retry": null,
     "noOptionsFound": "オプションが見つかりません"
   },
   "accessibility": {
@@ -705,6 +706,7 @@
     "openSettings": "システム設定を開く"
   },
   "errors": {
+    "shortcutInitializationFailed": null,
     "loadDirectory": "ディレクトリの読み込みエラー: {{error}}",
     "micPermissionDeniedTitle": "マイクへのアクセスが拒否されました",
     "micPermissionDenied": {

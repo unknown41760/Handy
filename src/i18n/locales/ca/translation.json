@@ -701,6 +701,7 @@
     "open": "Obre",
     "copy": "Copia",
     "clear": "Neteja",
+    "retry": null,
     "noOptionsFound": "No s'ha trobat cap opció"
   },
   "accessibility": {
@@ -708,6 +709,7 @@
     "openSettings": "Obriu la configuració del sistema"
   },
   "errors": {
+    "shortcutInitializationFailed": null,
     "loadDirectory": "Error en carregar el directori: {{error}}",
     "micPermissionDeniedTitle": "Accés al micròfon denegat",
     "micPermissionDenied": {

@@ -698,6 +698,7 @@
     "open": "فتح",
     "copy": "نسخ",
     "clear": "مسح",
+    "retry": null,
     "noOptionsFound": "لم يتم العثور على خيارات"
   },
   "accessibility": {
@@ -705,6 +706,7 @@
     "openSettings": "فتح إعدادات النظام"
   },
   "errors": {
+    "shortcutInitializationFailed": null,
     "loadDirectory": "خطأ في تحميل المجلد: {{error}}",
     "micPermissionDeniedTitle": "تم رفض الوصول إلى الميكروفون",
     "micPermissionDenied": {

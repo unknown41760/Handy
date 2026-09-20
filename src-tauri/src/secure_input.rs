@@ -95,9 +95,35 @@ pub fn unregister_cancel_fallback(app: &AppHandle) {
 }
 
 /// Synchronize Carbon fallback registrations with current settings and
-/// lifecycle state while preserving unchanged registrations.
+/// lifecycle state while preserving unchanged registrations. Best-effort
+/// callers keep the historical void API, while transactional lifecycle paths
+/// can use the checked variant below.
 pub fn reconcile_fallback(app: &AppHandle) {
+    if let Err(error) = imp::reconcile_fallback(app) {
+        log::warn!("Secure Input fallback reconciliation incomplete: {}", error);
+    }
+}
+
+pub fn reconcile_fallback_checked(app: &AppHandle) -> Result<(), String> {
     imp::reconcile_fallback(app)
+}
+
+/// Temporarily remove the Carbon shadow(s) for one binding before mutating
+/// that binding's primary registration. The fallback state is intentionally
+/// left intact until normal reconciliation runs, so callers can restore the
+/// exact shadow(s) if the primary mutation fails.
+pub fn suspend_binding_fallback(
+    app: &AppHandle,
+    binding_id: &str,
+) -> Result<Vec<crate::settings::ShortcutBinding>, String> {
+    imp::suspend_binding_fallback(app, binding_id)
+}
+
+pub fn restore_suspended_binding_fallback(
+    app: &AppHandle,
+    bindings: &[crate::settings::ShortcutBinding],
+) -> Result<(), String> {
+    imp::restore_suspended_binding_fallback(app, bindings)
 }
 
 /// Temporarily remove all Carbon fallback registrations before switching to
@@ -338,7 +364,7 @@ mod imp {
                     }
 
                     if state.sustained.swap(false, Ordering::SeqCst) {
-                        reconcile_fallback(&app);
+                        let _ = reconcile_fallback(&app);
                     } else if was_enabled || was_blocked {
                         refresh_tray(&app);
                         emit_status(&app);
@@ -360,7 +386,7 @@ mod imp {
                             SUSTAIN_THRESHOLD.as_secs()
                         );
                         state.sustained.store(true, Ordering::SeqCst);
-                        reconcile_fallback(&app);
+                        let _ = reconcile_fallback(&app);
                     }
                 }
             }
@@ -541,9 +567,13 @@ mod imp {
         Ok(())
     }
 
-    pub fn reconcile_fallback(app: &AppHandle) {
+    pub fn reconcile_fallback(app: &AppHandle) -> Result<(), String> {
         let state = app.state::<SecureInputState>();
-        let _operation = state.fallback_operation.lock().unwrap();
+        let _operation = state
+            .fallback_operation
+            .lock()
+            .map_err(|_| "Failed to lock Secure Input fallback operation".to_string())?;
+        let mut failures = Vec::new();
 
         let previous = {
             let mut fallback = state.fallback.lock().unwrap();
@@ -603,6 +633,10 @@ mod imp {
                     "SecureInput fallback: failed to unregister '{}': {}; keeping it tracked for retry",
                     binding.current_binding, e
                 );
+                failures.push(format!(
+                    "failed to unregister fallback '{}': {}",
+                    binding.current_binding, e
+                ));
                 if !next.uncovered.contains(&binding.id) {
                     next.uncovered.push(binding.id.clone());
                 }
@@ -649,6 +683,10 @@ mod imp {
                         "SecureInput fallback: could not cover '{}' ('{}'): {}",
                         id, shadow.current_binding, e
                     );
+                    failures.push(format!(
+                        "failed to register fallback '{}' ('{}'): {}",
+                        id, shadow.current_binding, e
+                    ));
                     next.uncovered.push(id);
                 }
             }
@@ -679,12 +717,98 @@ mod imp {
         // reads app state and must not nest under the operation mutex.
         refresh_tray(app);
         emit_status(app);
+
+        if failures.is_empty() {
+            Ok(())
+        } else {
+            Err(failures.join("; "))
+        }
+    }
+
+    pub fn suspend_binding_fallback(
+        app: &AppHandle,
+        binding_id: &str,
+    ) -> Result<Vec<ShortcutBinding>, String> {
+        let state = app.state::<SecureInputState>();
+        let _operation = state
+            .fallback_operation
+            .lock()
+            .map_err(|_| "Failed to lock Secure Input fallback operation".to_string())?;
+        let tracked = state
+            .fallback
+            .lock()
+            .map_err(|_| "Failed to lock Secure Input fallback state".to_string())?
+            .registered
+            .iter()
+            .filter(|binding| binding.id == binding_id)
+            .cloned()
+            .collect::<Vec<_>>();
+
+        let mut removed: Vec<ShortcutBinding> = Vec::new();
+        for binding in tracked {
+            if let Err(error) =
+                crate::shortcut::tauri_impl::unregister_shortcut(app, binding.clone())
+            {
+                let mut rollback_failures = Vec::new();
+                for removed_binding in removed.iter().rev() {
+                    if let Err(rollback_error) =
+                        crate::shortcut::tauri_impl::ensure_shortcut_registered(
+                            app,
+                            removed_binding.clone(),
+                        )
+                    {
+                        rollback_failures.push(format!(
+                            "{}: {}",
+                            removed_binding.current_binding, rollback_error
+                        ));
+                    }
+                }
+                let mut message = format!(
+                    "Failed to suspend Secure Input fallback '{}' for '{}': {}",
+                    binding.current_binding, binding_id, error
+                );
+                if !rollback_failures.is_empty() {
+                    message.push_str(&format!(
+                        "; fallback rollback incomplete: {}",
+                        rollback_failures.join("; ")
+                    ));
+                }
+                return Err(message);
+            }
+            removed.push(binding);
+        }
+
+        Ok(removed)
+    }
+
+    pub fn restore_suspended_binding_fallback(
+        app: &AppHandle,
+        bindings: &[ShortcutBinding],
+    ) -> Result<(), String> {
+        let state = app.state::<SecureInputState>();
+        let _operation = state
+            .fallback_operation
+            .lock()
+            .map_err(|_| "Failed to lock Secure Input fallback operation".to_string())?;
+        let mut failures = Vec::new();
+        for binding in bindings {
+            if let Err(error) =
+                crate::shortcut::tauri_impl::ensure_shortcut_registered(app, binding.clone())
+            {
+                failures.push(format!("{}: {}", binding.current_binding, error));
+            }
+        }
+        if failures.is_empty() {
+            Ok(())
+        } else {
+            Err(failures.join("; "))
+        }
     }
 
     fn schedule_reconcile(app: &AppHandle) {
         let app = app.clone();
         tauri::async_runtime::spawn(async move {
-            reconcile_fallback(&app);
+            let _ = reconcile_fallback(&app);
         });
     }
 
@@ -798,7 +922,23 @@ mod imp {
 
     pub fn unregister_cancel_fallback(_app: &AppHandle) {}
 
-    pub fn reconcile_fallback(_app: &AppHandle) {}
+    pub fn reconcile_fallback(_app: &AppHandle) -> Result<(), String> {
+        Ok(())
+    }
+
+    pub fn suspend_binding_fallback(
+        _app: &AppHandle,
+        _binding_id: &str,
+    ) -> Result<Vec<crate::settings::ShortcutBinding>, String> {
+        Ok(Vec::new())
+    }
+
+    pub fn restore_suspended_binding_fallback(
+        _app: &AppHandle,
+        _bindings: &[crate::settings::ShortcutBinding],
+    ) -> Result<(), String> {
+        Ok(())
+    }
 
     pub fn suspend_fallback_for_backend_switch(_app: &AppHandle) -> Result<(), String> {
         Ok(())

@@ -698,6 +698,7 @@
     "open": "Відкрити",
     "copy": "Копіювати",
     "clear": "Очистити",
+    "retry": null,
     "noOptionsFound": "Опцій не знайдено"
   },
   "accessibility": {
@@ -705,6 +706,7 @@
     "openSettings": "Відкрити Системні налаштування"
   },
   "errors": {
+    "shortcutInitializationFailed": null,
     "loadDirectory": "Помилка завантаження папки: {{error}}",
     "micPermissionDeniedTitle": "Доступ до мікрофона заборонено",
     "micPermissionDenied": {

@@ -698,6 +698,7 @@
     "open": "Apri",
     "copy": "Copia",
     "clear": "Svuota",
+    "retry": null,
     "noOptionsFound": "Nessuna opzione trovata"
   },
   "accessibility": {
@@ -705,6 +706,7 @@
     "openSettings": "Apri Impostazioni di Sistema"
   },
   "errors": {
+    "shortcutInitializationFailed": null,
     "loadDirectory": "Errore di caricamento cartella: {{error}}",
     "micPermissionDeniedTitle": "Accesso al microfono negato",
     "micPermissionDenied": {

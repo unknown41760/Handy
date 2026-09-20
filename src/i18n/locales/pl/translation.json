@@ -698,6 +698,7 @@
     "open": "Otwórz",
     "copy": "Kopiuj",
     "clear": "Wyczyść",
+    "retry": null,
     "noOptionsFound": "Nie znaleziono opcji"
   },
   "accessibility": {
@@ -705,6 +706,7 @@
     "openSettings": "Otwórz ustawienia systemowe"
   },
   "errors": {
+    "shortcutInitializationFailed": null,
     "loadDirectory": "Błąd wczytywania katalogu: {{error}}",
     "micPermissionDeniedTitle": "Odmowa dostępu do mikrofonu",
     "micPermissionDenied": {

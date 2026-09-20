@@ -701,6 +701,7 @@
     "open": "खोल्नुहोस्",
     "copy": "कपी गर्नुहोस्",
     "clear": "खाली गर्नुहोस्",
+    "retry": null,
     "noOptionsFound": "कुनै विकल्प भेटिएन"
   },
   "accessibility": {
@@ -708,6 +709,7 @@
     "openSettings": "सिस्टम सेटिङहरू खोल्नुहोस्"
   },
   "errors": {
+    "shortcutInitializationFailed": null,
     "loadDirectory": "डाइरेक्टरी लोड गर्दा त्रुटि: {{error}}",
     "micPermissionDeniedTitle": "माइक्रोफोन पहुँच अस्वीकृत गरियो",
     "micPermissionDenied": {

@@ -698,6 +698,7 @@
     "open": "열기",
     "copy": "복사",
     "clear": "지우기",
+    "retry": null,
     "noOptionsFound": "옵션을 찾을 수 없습니다"
   },
   "accessibility": {
@@ -705,6 +706,7 @@
     "openSettings": "시스템 설정 열기"
   },
   "errors": {
+    "shortcutInitializationFailed": null,
     "loadDirectory": "디렉토리 로딩 오류: {{error}}",
     "micPermissionDeniedTitle": "마이크 접근이 거부되었습니다",
     "micPermissionDenied": {

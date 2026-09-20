@@ -13,7 +13,7 @@ mod handler;
 pub mod handy_keys;
 pub mod tauri_impl;
 
-use log::{debug, error, info, warn};
+use log::{error, info, warn};
 use serde::Serialize;
 use specta::Type;
 use tauri::{AppHandle, Emitter, Manager};
@@ -40,10 +40,7 @@ pub fn init_shortcuts(app: &AppHandle) -> Result<(), String> {
     let user_settings = settings::load_or_create_app_settings(app);
 
     match user_settings.keyboard_implementation {
-        KeyboardImplementation::Tauri => {
-            tauri_impl::init_shortcuts(app);
-            Ok(())
-        }
+        KeyboardImplementation::Tauri => tauri_impl::init_shortcuts(app),
         KeyboardImplementation::HandyKeys => match handy_keys::init_shortcuts(app) {
             Ok(()) => Ok(()),
             Err(handy_keys::ShortcutInitError::Backend(error)) => {
@@ -296,10 +293,34 @@ pub fn change_binding(
         });
     }
 
+    // Remove any Carbon shadow for the old shortcut before mutating the
+    // primary registration. If that teardown fails, the old shortcut remains
+    // fully intact and settings are not changed.
+    let suspended_fallback = match crate::secure_input::suspend_binding_fallback(&app, &id) {
+        Ok(bindings) => bindings,
+        Err(error) => {
+            let error_msg = format!("Failed to suspend Secure Input fallback: {}", error);
+            error!("change_binding error: {}", error_msg);
+            return Ok(BindingResponse {
+                success: false,
+                binding: None,
+                error: Some(error_msg),
+            });
+        }
+    };
+
     // Unregister the existing binding. If teardown fails, keep settings and
     // runtime state unchanged instead of risking two live registrations.
     if let Err(e) = unregister_shortcut(&app, binding_to_modify.clone()) {
-        let error_msg = format!("Failed to unregister shortcut: {}", e);
+        let mut error_msg = format!("Failed to unregister shortcut: {}", e);
+        if let Err(restore_error) =
+            crate::secure_input::restore_suspended_binding_fallback(&app, &suspended_fallback)
+        {
+            error_msg.push_str(&format!(
+                "; Secure Input fallback rollback incomplete: {}",
+                restore_error
+            ));
+        }
         error!("change_binding error: {}", error_msg);
         return Ok(BindingResponse {
             success: false,
@@ -318,6 +339,14 @@ pub fn change_binding(
         if let Err(restore_error) = restore_registration(&app, &binding_to_modify) {
             error_msg.push_str(&format!(
                 "; rollback incomplete while restoring previous shortcut: {}",
+                restore_error
+            ));
+        }
+        if let Err(restore_error) =
+            crate::secure_input::restore_suspended_binding_fallback(&app, &suspended_fallback)
+        {
+            error_msg.push_str(&format!(
+                "; Secure Input fallback rollback incomplete: {}",
                 restore_error
             ));
         }
@@ -555,16 +584,20 @@ pub fn delete_transcription_preset(app: AppHandle, id: String) -> Result<(), Str
         .iter()
         .position(|preset| preset.id == id)
         .ok_or_else(|| format!("Transcription preset '{}' not found", id))?;
-    let preset = app_settings.transcription_presets[index].clone();
+    let suspended_fallback = crate::secure_input::suspend_binding_fallback(&app, &id)?;
 
     if let Some(binding) = app_settings.bindings.get(&id).cloned() {
-        if preset.enabled {
-            unregister_shortcut(&app, binding)?;
-        } else if let Err(error) = unregister_shortcut(&app, binding) {
-            debug!(
-                "delete_transcription_preset: disabled shortcut '{}' was not registered: {}",
-                id, error
-            );
+        if let Err(error) = unregister_shortcut(&app, binding) {
+            let mut message = format!("Failed to unregister preset shortcut '{}': {}", id, error);
+            if let Err(restore_error) =
+                crate::secure_input::restore_suspended_binding_fallback(&app, &suspended_fallback)
+            {
+                message.push_str(&format!(
+                    "; Secure Input fallback rollback incomplete: {}",
+                    restore_error
+                ));
+            }
+            return Err(message);
         }
     }
 
@@ -683,8 +716,24 @@ pub fn update_transcription_preset(
     if preset.enabled && !was_enabled {
         register_shortcut(&app, binding.expect("enabled preset binding checked above"))?;
     } else if !preset.enabled && was_enabled {
+        let suspended_fallback = crate::secure_input::suspend_binding_fallback(&app, &preset.id)?;
         if let Some(binding) = binding {
-            unregister_shortcut(&app, binding)?;
+            if let Err(error) = unregister_shortcut(&app, binding) {
+                let mut message = format!(
+                    "Failed to unregister preset shortcut '{}' while disabling: {}",
+                    preset.id, error
+                );
+                if let Err(restore_error) = crate::secure_input::restore_suspended_binding_fallback(
+                    &app,
+                    &suspended_fallback,
+                ) {
+                    message.push_str(&format!(
+                        "; Secure Input fallback rollback incomplete: {}",
+                        restore_error
+                    ));
+                }
+                return Err(message);
+            }
         } else {
             warn!(
                 "Enabled transcription preset '{}' had no shortcut binding while disabling",
@@ -776,16 +825,30 @@ pub fn change_keyboard_implementation_setting(
         if let Err(error) = crate::secure_input::suspend_fallback_for_backend_switch(&app) {
             let restore_result =
                 restore_bindings_for_implementation(&app, current_impl, &old_bindings);
-            crate::secure_input::reconcile_fallback(&app);
-            return match restore_result {
-                Ok(()) => Err(format!(
+            let fallback_restore = crate::secure_input::reconcile_fallback_checked(&app);
+            return match (restore_result, fallback_restore) {
+                (Ok(()), Ok(())) => Err(format!(
                     "Failed to prepare Secure Input fallback for {:?}: {}; restored {:?}",
                     new_impl, error, current_impl
                 )),
-                Err(restore_error) => Err(format!(
-                    "Failed to prepare Secure Input fallback for {:?}: {}; rollback incomplete while restoring {:?}: {}",
-                    new_impl, error, current_impl, restore_error
-                )),
+                (primary, fallback) => {
+                    let mut details = Vec::new();
+                    if let Err(restore_error) = primary {
+                        details.push(format!("restoring {:?}: {}", current_impl, restore_error));
+                    }
+                    if let Err(restore_error) = fallback {
+                        details.push(format!(
+                            "restoring Secure Input fallback: {}",
+                            restore_error
+                        ));
+                    }
+                    Err(format!(
+                        "Failed to prepare Secure Input fallback for {:?}: {}; rollback incomplete: {}",
+                        new_impl,
+                        error,
+                        details.join("; ")
+                    ))
+                }
             };
         }
     }
@@ -804,16 +867,30 @@ pub fn change_keyboard_implementation_setting(
 
     if let Err(error) = target_result {
         let restore_result = restore_bindings_for_implementation(&app, current_impl, &old_bindings);
-        crate::secure_input::reconcile_fallback(&app);
-        return match restore_result {
-            Ok(()) => Err(format!(
+        let fallback_restore = crate::secure_input::reconcile_fallback_checked(&app);
+        return match (restore_result, fallback_restore) {
+            (Ok(()), Ok(())) => Err(format!(
                 "Failed to switch keyboard implementation to {:?}: {}. Restored {:?}.",
                 new_impl, error, current_impl
             )),
-            Err(restore_error) => Err(format!(
-                "Failed to switch keyboard implementation to {:?}: {}; rollback incomplete while restoring {:?}: {}",
-                new_impl, error, current_impl, restore_error
-            )),
+            (primary, fallback) => {
+                let mut details = Vec::new();
+                if let Err(restore_error) = primary {
+                    details.push(format!("restoring {:?}: {}", current_impl, restore_error));
+                }
+                if let Err(restore_error) = fallback {
+                    details.push(format!(
+                        "restoring Secure Input fallback: {}",
+                        restore_error
+                    ));
+                }
+                Err(format!(
+                    "Failed to switch keyboard implementation to {:?}: {}; rollback incomplete: {}",
+                    new_impl,
+                    error,
+                    details.join("; ")
+                ))
+            }
         };
     }
 
@@ -1549,23 +1626,51 @@ pub fn change_auto_submit_key_setting(app: AppHandle, key: String) -> Result<(),
 #[tauri::command]
 #[specta::specta]
 pub fn change_post_process_enabled_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
-    let mut settings = settings::get_settings(&app);
-    settings.post_process_enabled = enabled;
-    settings::write_settings(&app, settings.clone());
+    let mut app_settings = settings::get_settings(&app);
+    if app_settings.post_process_enabled == enabled {
+        return Ok(());
+    }
 
-    // Register or unregister the post-processing shortcut
-    if let Some(binding) = settings
+    let binding = app_settings
         .bindings
         .get("transcribe_with_post_process")
-        .cloned()
-    {
-        if enabled {
-            let _ = register_shortcut(&app, binding);
-        } else {
-            let _ = unregister_shortcut(&app, binding);
+        .cloned();
+
+    if enabled {
+        if let Some(binding) = binding {
+            register_shortcut(&app, binding)?;
+        }
+    } else {
+        // Do not remove a possible stop/release event source during an active
+        // transcription. The operation snapshot already decides whether the
+        // current recording will post-process; this toggle applies to future
+        // operations.
+        if settings::has_active_transcription_operation(&app) {
+            return Err("Cannot disable AI post-processing while recording".to_string());
+        }
+
+        let suspended_fallback =
+            crate::secure_input::suspend_binding_fallback(&app, "transcribe_with_post_process")?;
+        if let Some(binding) = binding {
+            if let Err(error) = unregister_shortcut(&app, binding) {
+                let mut message =
+                    format!("Failed to unregister post-processing shortcut: {}", error);
+                if let Err(restore_error) = crate::secure_input::restore_suspended_binding_fallback(
+                    &app,
+                    &suspended_fallback,
+                ) {
+                    message.push_str(&format!(
+                        "; Secure Input fallback rollback incomplete: {}",
+                        restore_error
+                    ));
+                }
+                return Err(message);
+            }
         }
     }
 
+    app_settings.post_process_enabled = enabled;
+    settings::write_settings(&app, app_settings);
     crate::secure_input::reconcile_fallback(&app);
     Ok(())
 }

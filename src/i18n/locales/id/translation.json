@@ -701,6 +701,7 @@
     "open": "Buka",
     "copy": "Salin",
     "clear": "Bersihkan",
+    "retry": null,
     "noOptionsFound": "Tidak ada opsi yang ditemukan"
   },
   "accessibility": {
@@ -708,6 +709,7 @@
     "openSettings": "Buka Pengaturan Sistem"
   },
   "errors": {
+    "shortcutInitializationFailed": null,
     "loadDirectory": "Kesalahan saat memuat direktori: {{error}}",
     "micPermissionDeniedTitle": "Akses Mikrofon Ditolak",
     "micPermissionDenied": {

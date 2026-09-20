@@ -701,6 +701,7 @@
     "open": "Åbn",
     "copy": "Kopiér",
     "clear": "Ryd",
+    "retry": null,
     "noOptionsFound": "Ingen muligheder fundet"
   },
   "accessibility": {
@@ -708,6 +709,7 @@
     "openSettings": "Åbn systemindstillinger"
   },
   "errors": {
+    "shortcutInitializationFailed": null,
     "loadDirectory": "Fejl ved indlæsning af mappe: {{error}}",
     "micPermissionDeniedTitle": "Mikrofonadgang nægtet",
     "micPermissionDenied": {

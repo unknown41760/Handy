@@ -698,6 +698,7 @@
     "open": "開啟",
     "copy": "複製",
     "clear": "清除",
+    "retry": null,
     "noOptionsFound": "未找到選項"
   },
   "accessibility": {
@@ -705,6 +706,7 @@
     "openSettings": "開啟系統設定"
   },
   "errors": {
+    "shortcutInitializationFailed": null,
     "loadDirectory": "載入目錄時發生錯誤: {{error}}",
     "micPermissionDeniedTitle": "麥克風存取被拒絕",
     "micPermissionDenied": {

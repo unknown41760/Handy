@@ -698,6 +698,7 @@
     "open": "Открыть",
     "copy": "Копировать",
     "clear": "Очистить",
+    "retry": null,
     "noOptionsFound": "Вариантов не найдено"
   },
   "accessibility": {
@@ -705,6 +706,7 @@
     "openSettings": "Открыть настройки системы"
   },
   "errors": {
+    "shortcutInitializationFailed": null,
     "loadDirectory": "Ошибка загрузки каталога: {{error}}.",
     "micPermissionDeniedTitle": "Доступ к микрофону запрещён",
     "micPermissionDenied": {

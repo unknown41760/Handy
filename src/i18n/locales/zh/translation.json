@@ -698,6 +698,7 @@
     "open": "打开",
     "copy": "复制",
     "clear": "清除",
+    "retry": null,
     "noOptionsFound": "未找到选项"
   },
   "accessibility": {
@@ -705,6 +706,7 @@
     "openSettings": "打开系统设置"
   },
   "errors": {
+    "shortcutInitializationFailed": null,
     "loadDirectory": "加载目录时出错: {{error}}",
     "micPermissionDeniedTitle": "麦克风访问被拒绝",
     "micPermissionDenied": {
