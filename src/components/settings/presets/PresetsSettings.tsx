@@ -15,6 +15,9 @@ import { ToggleSwitch } from "@/components/ui/ToggleSwitch";
 import { Input } from "@/components/ui/Input";
 import { Select } from "@/components/ui/Select";
 import { ShortcutInput } from "../ShortcutInput";
+import { Button } from "@/components/ui/Button";
+
+const MAX_PRESETS = 10;
 
 interface PresetCardProps {
   preset: TranscriptionPreset;
@@ -113,15 +116,45 @@ const PresetCard: React.FC<PresetCardProps> = ({ preset }) => {
   const presetForSave = { ...preset, language: normalizedLanguage };
   const translateAvailable = selectedModel?.supports_translation ?? false;
   const globalPostProcessingEnabled = settings?.post_process_enabled ?? false;
+  const hasShortcut = Boolean(settings?.bindings?.[preset.id]);
+
+  const deletePreset = async () => {
+    if (
+      !window.confirm(
+        t("settings.presets.deleteConfirm", { name: preset.name }),
+      )
+    ) {
+      return;
+    }
+
+    setSaving(true);
+    try {
+      const result = await commands.deleteTranscriptionPreset(preset.id);
+      if (result.status === "error") {
+        throw new Error(result.error);
+      }
+      await refreshSettings();
+    } catch (error) {
+      toast.error(t("settings.presets.deleteFailed"), {
+        description: String(error),
+      });
+    } finally {
+      setSaving(false);
+    }
+  };
 
   return (
     <SettingsGroup title={preset.name}>
       <ToggleSwitch
         checked={preset.enabled}
         onChange={(enabled) => savePreset({ ...presetForSave, enabled })}
-        disabled={saving}
+        disabled={saving || !hasShortcut}
         label={t("settings.presets.enabled")}
-        description={t("settings.presets.enabledDescription")}
+        description={
+          hasShortcut
+            ? t("settings.presets.enabledDescription")
+            : t("settings.presets.shortcutRequired")
+        }
         grouped={true}
       />
 
@@ -144,7 +177,7 @@ const PresetCard: React.FC<PresetCardProps> = ({ preset }) => {
         />
       </SettingContainer>
 
-      <ShortcutInput shortcutId={preset.id} grouped={true} />
+      <ShortcutInput shortcutId={preset.id} grouped={true} allowCreate />
 
       <SettingContainer
         title={t("settings.presets.model")}
@@ -268,26 +301,85 @@ const PresetCard: React.FC<PresetCardProps> = ({ preset }) => {
           />
         </SettingContainer>
       )}
+
+      <SettingContainer
+        title={t("settings.presets.deletePreset")}
+        description={t("settings.presets.deleteDescription")}
+        grouped={true}
+      >
+        <Button
+          size="sm"
+          variant="danger-ghost"
+          onClick={() => void deletePreset()}
+          disabled={saving}
+        >
+          {t("settings.presets.deletePreset")}
+        </Button>
+      </SettingContainer>
     </SettingsGroup>
   );
 };
 
 export const PresetsSettings: React.FC = () => {
   const { t } = useTranslation();
-  const { settings } = useSettings();
+  const { settings, refreshSettings } = useSettings();
+  const [creating, setCreating] = useState(false);
   const presets = settings?.transcription_presets ?? [];
+  const atLimit = presets.length >= MAX_PRESETS;
+
+  const createPreset = async () => {
+    setCreating(true);
+    try {
+      const result = await commands.createTranscriptionPreset();
+      if (result.status === "error") {
+        throw new Error(result.error);
+      }
+      await refreshSettings();
+    } catch (error) {
+      toast.error(t("settings.presets.createFailed"), {
+        description: String(error),
+      });
+    } finally {
+      setCreating(false);
+    }
+  };
 
   return (
     <div className="max-w-3xl w-full mx-auto space-y-6">
-      <div className="px-4">
-        <h1 className="text-lg font-semibold">{t("settings.presets.title")}</h1>
-        <p className="text-sm text-mid-gray mt-1">
-          {t("settings.presets.description")}
-        </p>
+      <div className="px-4 flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-lg font-semibold">
+            {t("settings.presets.title")}
+          </h1>
+          <p className="text-sm text-mid-gray mt-1">
+            {t("settings.presets.description")}
+          </p>
+        </div>
+        <Button
+          size="sm"
+          onClick={() => void createPreset()}
+          disabled={creating || atLimit}
+        >
+          {t("settings.presets.addPreset")}
+        </Button>
       </div>
-      {presets.map((preset) => (
-        <PresetCard key={preset.id} preset={preset} />
-      ))}
+
+      {presets.length === 0 ? (
+        <div className="mx-4 rounded-lg border border-dashed border-mid-gray/40 px-6 py-10 text-center">
+          <div className="font-medium">{t("settings.presets.emptyTitle")}</div>
+          <p className="text-sm text-mid-gray mt-1">
+            {t("settings.presets.emptyDescription")}
+          </p>
+        </div>
+      ) : (
+        presets.map((preset) => <PresetCard key={preset.id} preset={preset} />)
+      )}
+
+      {atLimit && (
+        <p className="px-4 text-xs text-mid-gray">
+          {t("settings.presets.limitReached", { max: MAX_PRESETS })}
+        </p>
+      )}
     </div>
   );
 };

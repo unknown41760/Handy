@@ -352,64 +352,27 @@ export const useSettingsStore = create<SettingsStore>()(
       }
     },
 
-    // Update a specific binding
+    // Update a specific binding. The backend response is authoritative so
+    // first-time dynamic preset bindings can be created without fabricating a
+    // partial ShortcutBinding in frontend state.
     updateBinding: async (id, binding) => {
-      const { settings, setUpdating } = get();
+      const { setUpdating, refreshSettings } = get();
       const updateKey = `binding_${id}`;
-      const originalBinding = settings?.bindings?.[id]?.current_binding;
 
       setUpdating(updateKey, true);
 
       try {
-        // Optimistic update
-        set((state) => ({
-          settings: state.settings
-            ? {
-                ...state.settings,
-                bindings: {
-                  ...state.settings.bindings,
-                  [id]: {
-                    ...state.settings.bindings?.[id]!,
-                    current_binding: binding,
-                  },
-                },
-              }
-            : null,
-        }));
-
         const result = await commands.changeBinding(id, binding);
-
-        // Check if the command executed successfully
         if (result.status === "error") {
           throw new Error(result.error);
         }
-
-        // Check if the binding change was successful
         if (!result.data.success) {
           throw new Error(result.data.error || "Failed to update binding");
         }
+        await refreshSettings();
       } catch (error) {
         console.error(`Failed to update binding ${id}:`, error);
-
-        // Rollback on error
-        if (originalBinding && get().settings) {
-          set((state) => ({
-            settings: state.settings
-              ? {
-                  ...state.settings,
-                  bindings: {
-                    ...state.settings.bindings,
-                    [id]: {
-                      ...state.settings.bindings?.[id]!,
-                      current_binding: originalBinding,
-                    },
-                  },
-                }
-              : null,
-          }));
-        }
-
-        // Re-throw to let the caller know it failed
+        await refreshSettings().catch(console.error);
         throw error;
       } finally {
         setUpdating(updateKey, false);

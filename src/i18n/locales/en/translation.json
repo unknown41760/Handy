@@ -661,6 +661,17 @@
       "choosePrompt": "Choose a prompt",
       "promptRequired": "Choose a post-processing prompt before enabling AI post-processing.",
       "saveFailed": "Failed to save transcription preset",
+      "createFailed": "Failed to create transcription preset",
+      "deleteFailed": "Failed to delete transcription preset",
+      "addPreset": "Add Preset",
+      "addShortcut": "Add Shortcut",
+      "shortcutRequired": "Add a shortcut before enabling this preset.",
+      "emptyTitle": "No transcription presets yet",
+      "emptyDescription": "Create a preset to give a separate transcription setup its own shortcut.",
+      "limitReached": "You can create up to {{max}} transcription presets.",
+      "deletePreset": "Delete Preset",
+      "deleteDescription": "Remove this preset and its shortcut.",
+      "deleteConfirm": "Delete {{name}}? Its shortcut will also be removed.",
       "postProcessGlobalDisabled": "Post-processing is configured per preset, but the global Post Processing switch is off. No text will be sent to an AI provider until it is enabled."
     }
   },

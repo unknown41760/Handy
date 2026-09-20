@@ -650,6 +650,8 @@ pub fn run(cli_args: CliArgs) {
         .commands(collect_commands![
             shortcut::change_binding,
             shortcut::reset_binding,
+            shortcut::create_transcription_preset,
+            shortcut::delete_transcription_preset,
             shortcut::update_transcription_preset,
             shortcut::change_shortcut_activation_setting,
             shortcut::change_hold_threshold_ms_setting,

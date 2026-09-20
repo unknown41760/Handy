@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { listen } from "@tauri-apps/api/event";
 import { formatKeyCombination } from "../../lib/utils/keyboard";
 import { ResetButton } from "../ui/ResetButton";
+import { Button } from "../ui/Button";
 import { SettingContainer } from "../ui/SettingContainer";
 import { useSettings } from "../../hooks/useSettings";
 import { useOsType } from "../../hooks/useOsType";
@@ -16,6 +17,7 @@ interface HandyKeysShortcutInputProps {
   grouped?: boolean;
   shortcutId: string;
   disabled?: boolean;
+  allowCreate?: boolean;
 }
 
 interface HandyKeysEvent {
@@ -30,6 +32,7 @@ export const HandyKeysShortcutInput: React.FC<HandyKeysShortcutInputProps> = ({
   grouped = false,
   shortcutId,
   disabled = false,
+  allowCreate = false,
 }) => {
   const { t } = useTranslation();
   const { getSetting, updateBinding, resetBinding, isUpdating, isLoading } =
@@ -289,6 +292,35 @@ export const HandyKeysShortcutInput: React.FC<HandyKeysShortcutInputProps> = ({
   }
 
   const binding = bindings[shortcutId];
+  if (!binding && allowCreate) {
+    return (
+      <SettingContainer
+        title={t("settings.general.shortcut.title")}
+        description={t("settings.presets.shortcutRequired")}
+        descriptionMode={descriptionMode}
+        grouped={grouped}
+        disabled={disabled}
+      >
+        {isRecording ? (
+          <div
+            ref={shortcutRef}
+            className="px-2 py-1 text-sm font-semibold border border-logo-primary bg-logo-primary/30 rounded-md"
+          >
+            {formatCurrentKeys()}
+          </div>
+        ) : (
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={startRecording}
+            disabled={disabled}
+          >
+            {t("settings.presets.addShortcut")}
+          </Button>
+        )}
+      </SettingContainer>
+    );
+  }
   if (!binding) {
     return (
       <SettingContainer

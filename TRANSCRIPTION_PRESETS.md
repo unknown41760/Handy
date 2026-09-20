@@ -1,13 +1,14 @@
 # Transcription Presets
 
-This source tree adds three optional hotkey-driven transcription presets to Handy 0.9.6. Custom builds identify as `0.9.6+presets.3`.
+This source tree adds optional hotkey-driven transcription presets to Handy.
 
 ## What a preset stores
 
 Each preset has its own:
 
+- stable generated ID
 - name
-- global keyboard shortcut
+- optional global keyboard shortcut chosen explicitly by the user
 - speech-to-text model (or **Use current model**)
 - input language
 - built-in **Translate to English** choice when the model supports it
@@ -18,57 +19,49 @@ Using a preset does **not** overwrite Handy's normal selected model, language, t
 
 If a preset uses a different speech model, Handy loads that exact model for the preset operation. A later preset or normal transcription ensures its own requested model is resident before it transcribes.
 
-## Defaults
+## Defaults and lifecycle
 
-Three preset slots are created but disabled so existing behavior is unchanged:
+Fresh installs have zero extra transcription presets. Open **Settings → Presets** and choose **Add Preset** to create one. Up to 10 presets can be created through the UI/backend; loading settings never truncates an existing collection.
 
-- Preset 1 — `Ctrl+Alt+1`
-- Preset 2 — `Ctrl+Alt+2`
-- Preset 3 — `Ctrl+Alt+3`
+A new preset starts disabled and has no shortcut. The user must choose **Add Shortcut** and record a key combination before the preset can be enabled. The first chosen shortcut becomes that binding's reset/default value; Handy never guesses a preset hotkey.
 
-Open **Settings → Presets** to configure and enable them. Disabled preset shortcuts are stored but are not registered with Tauri shortcuts, HandyKeys, or the macOS Secure Input fallback.
+Deleting a preset removes its stored shortcut binding. Enabled shortcuts are unregistered before deletion is persisted. Generic settings normalization also removes orphan `preset_*` bindings that no longer refer to a stored preset.
+
+There is intentionally no special migration for the earlier private build that manufactured exactly three preset slots. Those persisted presets remain ordinary presets until manually deleted; no version-specific compatibility path is carried forward.
 
 For translation targets other than English, create a post-processing prompt such as “Translate the transcription to Spanish and output only the translation”, then select that prompt in the preset and enable AI post-processing.
 
 ## Validation and recovery
 
-- An enabled preset must resolve to an existing downloaded model.
+- An enabled preset must have a shortcut and resolve to an existing downloaded model.
 - An explicit model selected for a preset is validated whenever the preset is saved.
 - AI post-processing cannot be enabled without a valid non-empty saved prompt and a model configured for the selected AI provider.
 - Deleting a model disables presets that depended on it; explicit references to that deleted model are reset to **Use current model**.
 - Deleting a post-processing prompt disables post-processing for presets that referenced it.
-- Settings loading normalizes the fixed three preset slots, drops duplicate/unknown slots, restores missing slots, and clears stale prompt references.
-- Older settings stores automatically receive three disabled preset slots.
+- Settings loading normalizes existing preset names/languages, clears stale prompt references, and removes orphan preset bindings without manufacturing new presets.
+- Older Handy settings files that never contained presets deserialize to an empty preset list.
 
-## Automated coverage added
+## Architecture notes
 
-Unit/state-machine tests cover preset defaults and normalization, shortcut registration eligibility, immutable preset-vs-normal snapshots, operation handoff clearing, queued preset dispatch, deleted-model reconciliation, and deleted-prompt reconciliation.
+Preset IDs use the `preset_<uuid>` namespace and remain stable across settings writes and restarts. The shortcut binding uses the same ID, while runtime validity is checked against the actual persisted preset collection. The coordinator only uses the namespace to keep an in-flight preset recording stoppable if the preset is deleted while recording.
 
-## Build
+The global **Post Processing** toggle remains a master/privacy switch. Presets remember their configured prompt while it is off, but no preset sends text to an AI provider until the global toggle is enabled.
 
-Use Handy's existing build instructions in `BUILD.md`. The normal development commands are:
+History **Re-transcribe** intentionally uses the current normal model/settings, not the preset configuration that may have created the original entry. History does not currently persist a full transcription-operation snapshot.
 
-```bash
-bun install
-bun tauri dev
-```
+## Validation
 
-and for a production package:
+Run the normal project checks after changing preset behavior:
 
 ```bash
-bun run tauri build
+bun run format:check
+bun run lint
+bun run check:translations
+bun run check:model-languages
+bun run test:keyboard
+bun run test:presets:frontend
+cd src-tauri
+cargo fmt -- --check
+cargo clippy
+cargo test
 ```
-
-## Validation performed in the editing environment
-
-The repository translation checker was run with Node and reports all 25 non-English locales complete. The new strings in those locales currently use English fallback text so the existing CI key-completeness check passes without pretending they were professionally translated.
-
-`git diff --check` passes, and the changed TypeScript files were parsed with the available global TypeScript compiler with no parse-level diagnostics. A complete Tauri/Rust build and `cargo test` could not be run because Bun, Rust, Cargo, and the project dependencies are not installed in this environment. Run the repository's normal Bun/Rust CI/build before treating this as a production binary.
-
-## Behavioral notes
-
-- Changing a preset model preserves its language when supported; otherwise the preset is normalized to a valid model language. The backend repeats this normalization before saving.
-- The global **Post Processing** toggle is a master/privacy switch. Presets remember their configured prompt while it is off, but no preset sends text to an AI provider until the global toggle is enabled.
-- History **Re-transcribe** intentionally uses the current normal model/settings, not the preset configuration that may have created the original entry. History does not currently persist a full transcription-operation snapshot.
-- Bulk shortcut cleanup attempts to unregister all known preset bindings, including presets currently marked disabled, so stale OS registrations can be recovered after partial failures.
-- Non-English preset strings use `null` untranslated sentinels and i18next's English fallback instead of duplicating English text as if it were localized.

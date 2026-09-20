@@ -477,6 +477,17 @@
       "choosePrompt": null,
       "promptRequired": null,
       "saveFailed": null,
+      "createFailed": null,
+      "deleteFailed": null,
+      "addPreset": null,
+      "addShortcut": null,
+      "shortcutRequired": null,
+      "emptyTitle": null,
+      "emptyDescription": null,
+      "limitReached": null,
+      "deletePreset": null,
+      "deleteDescription": null,
+      "deleteConfirm": null,
       "postProcessGlobalDisabled": null
     },
     "history": {

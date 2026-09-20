@@ -268,20 +268,33 @@ pub async fn cancel_download(
 #[cfg(test)]
 mod tests {
     use super::reconcile_presets_for_deleted_model;
-    use crate::settings::get_default_settings;
+    use crate::settings::{get_default_settings, TranscriptionPreset};
+
+    fn test_preset(id: &str, model_id: &str) -> TranscriptionPreset {
+        TranscriptionPreset {
+            id: id.to_string(),
+            name: id.to_string(),
+            enabled: true,
+            model_id: model_id.to_string(),
+            language: "auto".to_string(),
+            translate_to_english: false,
+            post_process: false,
+            post_process_prompt_id: None,
+        }
+    }
 
     #[test]
     fn deleting_explicit_preset_model_disables_and_resets_that_preset() {
         let mut settings = get_default_settings();
         settings.selected_model = "normal-model".to_string();
-        settings.transcription_presets[0].enabled = true;
-        settings.transcription_presets[0].model_id = "preset-model".to_string();
-        settings.transcription_presets[1].enabled = true;
-        settings.transcription_presets[1].model_id = "other-model".to_string();
+        settings.transcription_presets = vec![
+            test_preset("preset_a", "preset-model"),
+            test_preset("preset_b", "other-model"),
+        ];
 
         let disabled = reconcile_presets_for_deleted_model(&mut settings, "preset-model", false);
 
-        assert_eq!(disabled, vec!["preset_1".to_string()]);
+        assert_eq!(disabled, vec!["preset_a".to_string()]);
         assert!(!settings.transcription_presets[0].enabled);
         assert!(settings.transcription_presets[0].model_id.is_empty());
         assert!(settings.transcription_presets[1].enabled);
@@ -292,14 +305,14 @@ mod tests {
     fn deleting_current_model_disables_use_current_presets() {
         let mut settings = get_default_settings();
         settings.selected_model = "normal-model".to_string();
-        settings.transcription_presets[0].enabled = true;
-        settings.transcription_presets[0].model_id.clear();
-        settings.transcription_presets[1].enabled = true;
-        settings.transcription_presets[1].model_id = "other-model".to_string();
+        settings.transcription_presets = vec![
+            test_preset("preset_a", ""),
+            test_preset("preset_b", "other-model"),
+        ];
 
         let disabled = reconcile_presets_for_deleted_model(&mut settings, "normal-model", true);
 
-        assert_eq!(disabled, vec!["preset_1".to_string()]);
+        assert_eq!(disabled, vec!["preset_a".to_string()]);
         assert!(!settings.transcription_presets[0].enabled);
         assert!(settings.transcription_presets[1].enabled);
     }

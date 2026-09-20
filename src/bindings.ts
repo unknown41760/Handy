@@ -21,6 +21,22 @@ async resetBinding(id: string) : Promise<Result<BindingResponse, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+async createTranscriptionPreset() : Promise<Result<TranscriptionPreset, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("create_transcription_preset") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async deleteTranscriptionPreset(id: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("delete_transcription_preset", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async updateTranscriptionPreset(preset: TranscriptionPreset) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("update_transcription_preset", { preset }) };
