@@ -100,6 +100,14 @@ pub fn reconcile_fallback(app: &AppHandle) {
     imp::reconcile_fallback(app)
 }
 
+/// Temporarily remove all Carbon fallback registrations before switching to
+/// the Tauri shortcut backend. This does not change persisted settings; a
+/// failed backend switch can call `reconcile_fallback` to restore the shadows
+/// from the still-current HandyKeys settings.
+pub fn suspend_fallback_for_backend_switch(app: &AppHandle) -> Result<(), String> {
+    imp::suspend_fallback_for_backend_switch(app)
+}
+
 /// Managed state + monitor startup. On non-macOS platforms the state exists
 /// but the monitor never runs and everything reports disabled.
 pub fn init(app: &AppHandle) {
@@ -150,7 +158,7 @@ mod imp {
         name: String,
     }
 
-    #[derive(Default)]
+    #[derive(Default, Clone)]
     struct FallbackState {
         /// Bindings shadow-registered through the Tauri/Carbon path (possibly
         /// with widened modifiers), kept so deactivation unregisters the
@@ -456,6 +464,57 @@ mod imp {
     ///
     /// Carbon sends a release only to the registration that received the press.
     /// Replacing a held push-to-talk registration loses its release. See #1999.
+    pub fn suspend_fallback_for_backend_switch(app: &AppHandle) -> Result<(), String> {
+        let state = app.state::<SecureInputState>();
+        let _operation = state
+            .fallback_operation
+            .lock()
+            .map_err(|_| "Failed to lock Secure Input fallback operation".to_string())?;
+
+        let previous = state
+            .fallback
+            .lock()
+            .map_err(|_| "Failed to lock Secure Input fallback state".to_string())?
+            .clone();
+        let mut removed = Vec::new();
+
+        for binding in &previous.registered {
+            if let Err(error) =
+                crate::shortcut::tauri_impl::unregister_shortcut(app, binding.clone())
+            {
+                let mut restore_failures = Vec::new();
+                for removed_binding in removed.iter().rev() {
+                    if let Err(restore_error) =
+                        crate::shortcut::tauri_impl::register_shortcut(app, removed_binding.clone())
+                    {
+                        restore_failures.push(format!("{}: {}", removed_binding.id, restore_error));
+                    }
+                }
+                if !restore_failures.is_empty() {
+                    error!(
+                        "SecureInput fallback rollback after backend-switch suspension failed: {}",
+                        restore_failures.join("; ")
+                    );
+                }
+                return Err(format!(
+                    "Failed to suspend Secure Input fallback shortcut '{}': {}",
+                    binding.id, error
+                ));
+            }
+            removed.push(binding.clone());
+        }
+
+        *state
+            .fallback
+            .lock()
+            .map_err(|_| "Failed to lock Secure Input fallback state".to_string())? =
+            FallbackState::default();
+        drop(_operation);
+        refresh_tray(app);
+        emit_status(app);
+        Ok(())
+    }
+
     pub fn reconcile_fallback(app: &AppHandle) {
         let state = app.state::<SecureInputState>();
         let _operation = state.fallback_operation.lock().unwrap();
@@ -478,6 +537,9 @@ mod imp {
         if eligible {
             for (id, binding) in &settings.bindings {
                 if id == "cancel" && !state.cancel_requested.load(Ordering::SeqCst) {
+                    continue;
+                }
+                if !crate::settings::is_known_shortcut_binding(&settings, id) {
                     continue;
                 }
                 if !crate::settings::is_optional_shortcut_enabled(&settings, id) {
@@ -707,6 +769,10 @@ mod imp {
     pub fn unregister_cancel_fallback(_app: &AppHandle) {}
 
     pub fn reconcile_fallback(_app: &AppHandle) {}
+
+    pub fn suspend_fallback_for_backend_switch(_app: &AppHandle) -> Result<(), String> {
+        Ok(())
+    }
 
     pub async fn run_diagnostic(_duration_secs: u32) -> Result<KeyboardDiagnosticReport, String> {
         Err("The keyboard diagnostic is only supported on macOS".to_string())

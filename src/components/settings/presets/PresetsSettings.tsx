@@ -177,7 +177,17 @@ const PresetCard: React.FC<PresetCardProps> = ({ preset }) => {
         />
       </SettingContainer>
 
-      <ShortcutInput shortcutId={preset.id} grouped={true} allowCreate />
+      <ShortcutInput
+        shortcutId={preset.id}
+        grouped={true}
+        allowCreate
+        title={t("settings.general.shortcut.title")}
+        description={
+          hasShortcut
+            ? t("settings.presets.shortcutDescription", { name: preset.name })
+            : t("settings.presets.shortcutRequired")
+        }
+      />
 
       <SettingContainer
         title={t("settings.presets.model")}

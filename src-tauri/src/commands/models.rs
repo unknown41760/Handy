@@ -1,6 +1,9 @@
 use crate::managers::model::{ModelInfo, ModelManager};
 use crate::managers::transcription::{ModelStateEvent, TranscriptionManager};
-use crate::settings::{get_settings, write_settings, AppSettings, ModelUnloadTimeout};
+use crate::settings::{
+    get_settings, reconcile_preset_model_capabilities, write_settings, AppSettings,
+    ModelUnloadTimeout,
+};
 use log::error;
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -84,6 +87,41 @@ fn reconcile_presets_for_deleted_model(
     disabled
 }
 
+fn reconcile_use_current_presets_for_model(
+    settings: &mut AppSettings,
+    supported_languages: &[String],
+    supports_language_detection: bool,
+    supports_translation: bool,
+) -> bool {
+    let mut changed = false;
+    for preset in settings
+        .transcription_presets
+        .iter_mut()
+        .filter(|preset| preset.model_id.trim().is_empty())
+    {
+        changed |= reconcile_preset_model_capabilities(
+            preset,
+            supported_languages,
+            supports_language_detection,
+            supports_translation,
+        );
+    }
+    changed
+}
+
+fn restore_preset_shortcuts(app: &AppHandle, bindings: &[crate::settings::ShortcutBinding]) {
+    for binding in bindings {
+        if let Err(error) = crate::shortcut::register_shortcut(app, binding.clone()) {
+            log::error!(
+                "Failed to restore preset shortcut '{}' after model deletion rollback: {}",
+                binding.id,
+                error
+            );
+        }
+    }
+    crate::secure_input::reconcile_fallback(app);
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn delete_model(
@@ -92,51 +130,51 @@ pub async fn delete_model(
     transcription_manager: State<'_, Arc<TranscriptionManager>>,
     model_id: String,
 ) -> Result<(), String> {
+    if crate::settings::has_active_transcription_operation(&app_handle) {
+        return Err("Cannot delete a model while a transcription recording is active".to_string());
+    }
+
     let settings_before = get_settings(&app_handle);
     let deleting_selected_model = settings_before.selected_model == model_id;
     let deleting_loaded_model =
         transcription_manager.get_current_model().as_deref() == Some(model_id.as_str());
 
-    // A loaded model must be released before its files can be removed. A preset
-    // can leave a different model resident than `selected_model`, so check the
-    // actual loaded engine rather than only the persistent selection. Delay all
-    // persisted settings changes until deletion succeeds.
-    if deleting_loaded_model {
-        transcription_manager
-            .unload_model()
-            .map_err(|e| format!("Failed to unload model: {}", e))?;
-    }
-
-    model_manager
-        .delete_model(&model_id)
-        .map_err(|e| e.to_string())?;
-
-    let mut settings = get_settings(&app_handle);
+    let mut next_settings = settings_before.clone();
     if deleting_selected_model {
-        settings.selected_model = String::new();
+        next_settings.selected_model = String::new();
+    }
+    let disabled_preset_ids =
+        reconcile_presets_for_deleted_model(&mut next_settings, &model_id, deleting_selected_model);
+    let bindings_to_unregister = disabled_preset_ids
+        .iter()
+        .filter_map(|id| settings_before.bindings.get(id).cloned())
+        .collect::<Vec<_>>();
+
+    let mut unregistered = Vec::new();
+    for binding in &bindings_to_unregister {
+        if let Err(error) = crate::shortcut::unregister_shortcut(&app_handle, binding.clone()) {
+            restore_preset_shortcuts(&app_handle, &unregistered);
+            return Err(format!(
+                "Failed to unregister preset shortcut '{}' before deleting model: {}",
+                binding.id, error
+            ));
+        }
+        unregistered.push(binding.clone());
     }
 
-    // Disable every enabled preset whose effective model was just deleted. An
-    // explicit reference is also reset to "Use current model" so the stale id
-    // cannot survive in persisted settings.
-    let disabled_preset_ids =
-        reconcile_presets_for_deleted_model(&mut settings, &model_id, deleting_selected_model);
-    let bindings_to_unregister: Vec<_> = disabled_preset_ids
-        .iter()
-        .filter_map(|id| settings.bindings.get(id).cloned())
-        .collect();
-
-    // First try to release any OS registrations while the preset transition is
-    // still in-flight. Persist the disabled state regardless: if a backend
-    // unregistration fails, broad shortcut cleanup intentionally retries all
-    // preset bindings (including disabled ones) on the next cleanup/switch.
-    for binding in bindings_to_unregister {
-        if let Err(error) = crate::shortcut::unregister_shortcut(&app_handle, binding) {
-            log::warn!("Failed to unregister preset for deleted model: {}", error);
+    if deleting_loaded_model {
+        if let Err(error) = transcription_manager.unload_model() {
+            restore_preset_shortcuts(&app_handle, &unregistered);
+            return Err(format!("Failed to unload model: {}", error));
         }
     }
 
-    write_settings(&app_handle, settings);
+    if let Err(error) = model_manager.delete_model(&model_id) {
+        restore_preset_shortcuts(&app_handle, &unregistered);
+        return Err(error.to_string());
+    }
+
+    write_settings(&app_handle, next_settings);
     let _ = app_handle.emit(
         "settings-changed",
         serde_json::json!({ "setting": "transcription_presets" }),
@@ -172,16 +210,22 @@ pub fn switch_active_model(app: &AppHandle, model_id: &str) -> Result<(), String
         return Err(format!("Model not downloaded: {}", model_id));
     }
 
-    let settings = get_settings(app);
-    let unload_timeout = settings.model_unload_timeout;
-    let old_model = settings.selected_model.clone();
-    let old_onboarding_completed = settings.onboarding_completed;
+    let settings_before = get_settings(app);
+    let unload_timeout = settings_before.model_unload_timeout;
 
     // Persist the new selection early so the frontend sees the correct model
-    // when it reacts to events emitted by load_model.
-    let mut settings = settings;
+    // when it reacts to events emitted by load_model. Presets that inherit the
+    // current model are normalized in the same write. Keep the exact previous
+    // settings so a failed load can also roll back those preset normalizations.
+    let mut settings = settings_before.clone();
     settings.selected_model = model_id.to_string();
     settings.onboarding_completed = true;
+    reconcile_use_current_presets_for_model(
+        &mut settings,
+        &model_info.supported_languages,
+        model_info.supports_language_detection,
+        model_info.supports_translation,
+    );
 
     write_settings(app, settings);
 
@@ -208,10 +252,7 @@ pub fn switch_active_model(app: &AppHandle, model_id: &str) -> Result<(), String
 
     // Load the model. On failure, revert the persisted selection.
     if let Err(e) = transcription_manager.load_model(model_id) {
-        let mut settings = get_settings(app);
-        settings.selected_model = old_model;
-        settings.onboarding_completed = old_onboarding_completed;
-        write_settings(app, settings);
+        write_settings(app, settings_before);
         return Err(e.to_string());
     }
 
@@ -267,7 +308,7 @@ pub async fn cancel_download(
 
 #[cfg(test)]
 mod tests {
-    use super::reconcile_presets_for_deleted_model;
+    use super::{reconcile_presets_for_deleted_model, reconcile_use_current_presets_for_model};
     use crate::settings::{get_default_settings, TranscriptionPreset};
 
     fn test_preset(id: &str, model_id: &str) -> TranscriptionPreset {
@@ -281,6 +322,30 @@ mod tests {
             post_process: false,
             post_process_prompt_id: None,
         }
+    }
+
+    #[test]
+    fn current_model_switch_reconciles_inherited_preset_capabilities() {
+        let mut settings = get_default_settings();
+        let mut inherited = test_preset("preset_inherited", "");
+        inherited.language = "auto".to_string();
+        inherited.translate_to_english = true;
+        let mut explicit = test_preset("preset_explicit", "other-model");
+        explicit.language = "auto".to_string();
+        explicit.translate_to_english = true;
+        settings.transcription_presets = vec![inherited, explicit];
+
+        assert!(reconcile_use_current_presets_for_model(
+            &mut settings,
+            &["en-US".to_string(), "nl-NL".to_string()],
+            false,
+            false,
+        ));
+
+        assert_eq!(settings.transcription_presets[0].language, "en");
+        assert!(!settings.transcription_presets[0].translate_to_english);
+        assert_eq!(settings.transcription_presets[1].language, "auto");
+        assert!(settings.transcription_presets[1].translate_to_english);
     }
 
     #[test]

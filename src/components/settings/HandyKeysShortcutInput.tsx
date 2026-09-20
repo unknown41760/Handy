@@ -18,6 +18,8 @@ interface HandyKeysShortcutInputProps {
   shortcutId: string;
   disabled?: boolean;
   allowCreate?: boolean;
+  title?: string;
+  description?: string;
 }
 
 interface HandyKeysEvent {
@@ -33,6 +35,8 @@ export const HandyKeysShortcutInput: React.FC<HandyKeysShortcutInputProps> = ({
   shortcutId,
   disabled = false,
   allowCreate = false,
+  title,
+  description,
 }) => {
   const { t } = useTranslation();
   const { getSetting, updateBinding, resetBinding, isUpdating, isLoading } =
@@ -263,8 +267,8 @@ export const HandyKeysShortcutInput: React.FC<HandyKeysShortcutInputProps> = ({
   if (isLoading) {
     return (
       <SettingContainer
-        title={t("settings.general.shortcut.title")}
-        description={t("settings.general.shortcut.description")}
+        title={title ?? t("settings.general.shortcut.title")}
+        description={description ?? t("settings.general.shortcut.description")}
         descriptionMode={descriptionMode}
         grouped={grouped}
       >
@@ -279,8 +283,8 @@ export const HandyKeysShortcutInput: React.FC<HandyKeysShortcutInputProps> = ({
   if (Object.keys(bindings).length === 0) {
     return (
       <SettingContainer
-        title={t("settings.general.shortcut.title")}
-        description={t("settings.general.shortcut.description")}
+        title={title ?? t("settings.general.shortcut.title")}
+        description={description ?? t("settings.general.shortcut.description")}
         descriptionMode={descriptionMode}
         grouped={grouped}
       >
@@ -295,8 +299,8 @@ export const HandyKeysShortcutInput: React.FC<HandyKeysShortcutInputProps> = ({
   if (!binding && allowCreate) {
     return (
       <SettingContainer
-        title={t("settings.general.shortcut.title")}
-        description={t("settings.presets.shortcutRequired")}
+        title={title ?? t("settings.general.shortcut.title")}
+        description={description ?? t("settings.presets.shortcutRequired")}
         descriptionMode={descriptionMode}
         grouped={grouped}
         disabled={disabled}
@@ -324,8 +328,8 @@ export const HandyKeysShortcutInput: React.FC<HandyKeysShortcutInputProps> = ({
   if (!binding) {
     return (
       <SettingContainer
-        title={t("settings.general.shortcut.title")}
-        description={t("settings.general.shortcut.notFound")}
+        title={title ?? t("settings.general.shortcut.title")}
+        description={description ?? t("settings.general.shortcut.notFound")}
         descriptionMode={descriptionMode}
         grouped={grouped}
       >
@@ -337,14 +341,15 @@ export const HandyKeysShortcutInput: React.FC<HandyKeysShortcutInputProps> = ({
   }
 
   // Get translated name and description for the binding
-  const translatedName = t(
-    `settings.general.shortcut.bindings.${shortcutId}.name`,
-    binding.name,
-  );
-  const translatedDescription = t(
-    `settings.general.shortcut.bindings.${shortcutId}.description`,
-    binding.description,
-  );
+  const translatedName =
+    title ??
+    t(`settings.general.shortcut.bindings.${shortcutId}.name`, binding.name);
+  const translatedDescription =
+    description ??
+    t(
+      `settings.general.shortcut.bindings.${shortcutId}.description`,
+      binding.description,
+    );
 
   return (
     <SettingContainer

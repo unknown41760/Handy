@@ -666,6 +666,7 @@
       "addPreset": "Add Preset",
       "addShortcut": "Add Shortcut",
       "shortcutRequired": "Add a shortcut before enabling this preset.",
+      "shortcutDescription": "Shortcut used to start {{name}}.",
       "emptyTitle": "No transcription presets yet",
       "emptyDescription": "Create a preset to give a separate transcription setup its own shortcut.",
       "limitReached": "You can create up to {{max}} transcription presets.",

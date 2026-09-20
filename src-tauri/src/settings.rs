@@ -8,6 +8,7 @@ use std::fmt;
 use std::sync::Mutex;
 use tauri::{AppHandle, Manager};
 use tauri_plugin_store::StoreExt;
+use uuid::Uuid;
 
 pub const APPLE_INTELLIGENCE_PROVIDER_ID: &str = "apple_intelligence";
 pub const APPLE_INTELLIGENCE_DEFAULT_MODEL_ID: &str = "Apple Intelligence";
@@ -148,6 +149,21 @@ impl ActiveTranscriptionState {
             .0
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
+    }
+
+    pub(crate) fn is_active(&self) -> bool {
+        self.0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .is_some()
+    }
+
+    pub(crate) fn preset_id(&self) -> Option<String> {
+        self.0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .as_ref()
+            .and_then(|config| config.preset_id.clone())
     }
 }
 
@@ -609,6 +625,65 @@ pub fn is_transcription_preset_enabled(settings: &AppSettings, id: &str) -> bool
         .any(|preset| preset.id == id && preset.enabled)
 }
 
+pub(crate) fn normalize_preset_language_for_model(
+    requested: &str,
+    supported_languages: &[String],
+    supports_language_detection: bool,
+) -> String {
+    let requested = requested.trim();
+    let requested = if requested.is_empty() {
+        "auto"
+    } else {
+        requested
+    };
+    if supported_languages.is_empty() {
+        return requested.to_string();
+    }
+
+    let effective = crate::managers::model::effective_language(
+        requested,
+        supported_languages,
+        supports_language_detection,
+    );
+    if effective == "auto" {
+        return effective;
+    }
+
+    if matches!(requested, "zh-Hans" | "zh-Hant")
+        && crate::managers::model::canonical_language_code(&effective) == "zh"
+    {
+        return requested.to_string();
+    }
+
+    match crate::managers::model::canonical_language_code(&effective) {
+        "zh" => "zh-Hans".to_string(),
+        stable => stable.to_string(),
+    }
+}
+
+pub(crate) fn reconcile_preset_model_capabilities(
+    preset: &mut TranscriptionPreset,
+    supported_languages: &[String],
+    supports_language_detection: bool,
+    supports_translation: bool,
+) -> bool {
+    let mut changed = false;
+    let normalized_language = normalize_preset_language_for_model(
+        &preset.language,
+        supported_languages,
+        supports_language_detection,
+    );
+    if normalized_language != preset.language {
+        preset.language = normalized_language;
+        changed = true;
+    }
+    if !supports_translation && preset.translate_to_english {
+        preset.translate_to_english = false;
+        changed = true;
+    }
+    changed
+}
+
 pub fn is_known_shortcut_binding(settings: &AppSettings, id: &str) -> bool {
     matches!(id, "transcribe" | "transcribe_with_post_process" | "cancel")
         || has_transcription_preset(settings, id)
@@ -636,17 +711,42 @@ pub fn is_optional_shortcut_enabled(settings: &AppSettings, id: &str) -> bool {
 
 /// Normalize only presets that actually exist. This deliberately does not
 /// manufacture slots or enforce the creation limit on load: an existing store
-/// is never truncated. Stale prompt references are disabled, and orphan preset
-/// shortcut bindings are removed generically.
+/// is never truncated. Identity repair preserves preset metadata but disables
+/// ambiguous/re-keyed entries until the user assigns a fresh shortcut.
 pub(crate) fn normalize_transcription_presets(settings: &mut AppSettings) -> bool {
     let valid_prompt_ids: std::collections::HashSet<&str> = settings
         .post_process_prompts
         .iter()
         .map(|prompt| prompt.id.as_str())
         .collect();
+    let mut used_ids = std::collections::HashSet::new();
     let mut changed = false;
 
     for preset in &mut settings.transcription_presets {
+        let old_id = preset.id.clone();
+        let valid_namespace = old_id
+            .strip_prefix("preset_")
+            .is_some_and(|suffix| !suffix.is_empty());
+        let duplicate = valid_namespace && !used_ids.insert(old_id.clone());
+
+        if !valid_namespace || duplicate {
+            let new_id = loop {
+                let candidate = format!("preset_{}", Uuid::new_v4().simple());
+                if used_ids.insert(candidate.clone()) {
+                    break candidate;
+                }
+            };
+
+            // Never move a binding to a repaired identity: duplicate bindings
+            // are ambiguous, and a malformed non-preset ID could belong to a
+            // future Handy shortcut that this version does not understand. The
+            // orphan `preset_*` cleanup below removes only stale preset-namespace
+            // bindings while preserving unrelated unknown/future bindings.
+            preset.id = new_id;
+            preset.enabled = false;
+            changed = true;
+        }
+
         let trimmed_name = preset.name.trim();
         if trimmed_name != preset.name {
             preset.name = trimmed_name.to_string();
@@ -688,6 +788,13 @@ pub(crate) fn normalize_transcription_presets(settings: &mut AppSettings) -> boo
         .bindings
         .retain(|id, _| !is_transcription_preset_binding(id) || preset_ids.contains(id));
     changed |= settings.bindings.len() != binding_count;
+
+    for preset in &mut settings.transcription_presets {
+        if preset.enabled && !settings.bindings.contains_key(&preset.id) {
+            preset.enabled = false;
+            changed = true;
+        }
+    }
 
     changed
 }
@@ -1294,6 +1401,16 @@ pub fn clear_active_transcription_operation(app: &AppHandle) {
     }
 }
 
+pub fn has_active_transcription_operation(app: &AppHandle) -> bool {
+    app.try_state::<ActiveTranscriptionState>()
+        .is_some_and(|state| state.is_active())
+}
+
+pub fn active_transcription_preset_id(app: &AppHandle) -> Option<String> {
+    app.try_state::<ActiveTranscriptionState>()
+        .and_then(|state| state.preset_id())
+}
+
 /// Startup entry point. Same load-or-create/salvage/migrate behavior as
 /// `get_settings`; kept as a named alias for call-site clarity, plus a
 /// one-time debug dump of the loaded settings.
@@ -1651,7 +1768,66 @@ mod tests {
             None
         );
         assert_eq!(settings.transcription_presets[0].model_id, "model-b");
+        assert!(!settings.transcription_presets[0].enabled);
         assert!(!settings.bindings.contains_key("preset_orphan"));
+    }
+
+    #[test]
+    fn preset_normalization_repairs_invalid_and_duplicate_ids_without_touching_static_bindings() {
+        let mut settings = get_default_settings();
+        let transcribe_binding = settings.bindings.get("transcribe").cloned().unwrap();
+
+        let mut reserved = test_preset("transcribe", "Reserved");
+        reserved.enabled = true;
+        let mut first = test_preset("preset_duplicate", "First");
+        first.enabled = true;
+        let mut duplicate = test_preset("preset_duplicate", "Duplicate");
+        duplicate.enabled = true;
+        let mut empty_suffix = test_preset("preset_", "Empty suffix");
+        empty_suffix.enabled = true;
+        settings.transcription_presets = vec![reserved, first, duplicate, empty_suffix];
+        settings.bindings.insert(
+            "preset_duplicate".to_string(),
+            ShortcutBinding {
+                id: "preset_duplicate".to_string(),
+                name: "Duplicate shortcut".to_string(),
+                description: "Duplicate shortcut".to_string(),
+                default_binding: "ctrl+alt+9".to_string(),
+                current_binding: "ctrl+alt+9".to_string(),
+            },
+        );
+
+        assert!(normalize_transcription_presets(&mut settings));
+        assert_eq!(settings.transcription_presets.len(), 4);
+        let ids = settings
+            .transcription_presets
+            .iter()
+            .map(|preset| preset.id.clone())
+            .collect::<std::collections::HashSet<_>>();
+        assert_eq!(ids.len(), 4);
+        assert!(settings
+            .transcription_presets
+            .iter()
+            .all(|preset| preset.id.starts_with("preset_") && preset.id != "preset_"));
+        assert_eq!(
+            settings.bindings["transcribe"].current_binding,
+            transcribe_binding.current_binding
+        );
+
+        let first = settings
+            .transcription_presets
+            .iter()
+            .find(|preset| preset.name == "First")
+            .unwrap();
+        assert_eq!(first.id, "preset_duplicate");
+        assert!(first.enabled);
+        assert!(settings
+            .transcription_presets
+            .iter()
+            .filter(|preset| preset.name != "First")
+            .all(|preset| !preset.enabled));
+
+        assert!(!normalize_transcription_presets(&mut settings));
     }
 
     #[test]
@@ -1735,9 +1911,12 @@ mod tests {
     #[test]
     fn operation_handoff_is_taken_before_processing_and_can_be_replaced() {
         let state = ActiveTranscriptionState::default();
+        assert!(!state.is_active());
+        assert_eq!(state.preset_id(), None);
         let mut first_settings = get_default_settings();
         first_settings.selected_model = "preset-model-a".to_string();
         state.set(persistent_transcription_operation(first_settings, false));
+        assert!(state.is_active());
 
         let first = state.take().expect("recording operation should be present");
         assert_eq!(first.settings.selected_model, "preset-model-a");

@@ -25,7 +25,7 @@ Fresh installs have zero extra transcription presets. Open **Settings → Preset
 
 A new preset starts disabled and has no shortcut. The user must choose **Add Shortcut** and record a key combination before the preset can be enabled. The first chosen shortcut becomes that binding's reset/default value; Handy never guesses a preset hotkey.
 
-Deleting a preset removes its stored shortcut binding. Enabled shortcuts are unregistered before deletion is persisted. Generic settings normalization also removes orphan `preset_*` bindings that no longer refer to a stored preset.
+Deleting a preset removes its stored shortcut binding. Enabled shortcuts are unregistered before deletion is persisted. Delete, disable, and shortcut-replacement operations are rejected while that preset owns the active recording so the stop/release event source cannot disappear mid-recording. Generic settings normalization also removes orphan `preset_*` bindings that no longer refer to a stored preset.
 
 There is intentionally no special migration for the earlier private build that manufactured exactly three preset slots. Those persisted presets remain ordinary presets until manually deleted; no version-specific compatibility path is carried forward.
 
@@ -34,7 +34,9 @@ For translation targets other than English, create a post-processing prompt such
 ## Validation and recovery
 
 - An enabled preset must have a shortcut and resolve to an existing downloaded model.
-- An explicit model selected for a preset is validated whenever the preset is saved.
+- Shortcut assignment is checked against Handy's other stored bindings even while a preset is disabled, so conflicts are rejected before enable-time registration.
+- Switching keyboard implementations is transactional: if target registration fails, Handy restores the previous implementation and bindings.
+- An explicit model selected for a preset is validated whenever the preset is saved. Presets using **Use current model** are reconciled when the current model changes so unsupported auto-detection/translation state is not left persisted.
 - AI post-processing cannot be enabled without a valid non-empty saved prompt and a model configured for the selected AI provider.
 - Deleting a model disables presets that depended on it; explicit references to that deleted model are reset to **Use current model**.
 - Deleting a post-processing prompt disables post-processing for presets that referenced it.
@@ -43,7 +45,7 @@ For translation targets other than English, create a post-processing prompt such
 
 ## Architecture notes
 
-Preset IDs use the `preset_<uuid>` namespace and remain stable across settings writes and restarts. The shortcut binding uses the same ID, while runtime validity is checked against the actual persisted preset collection. The coordinator only uses the namespace to keep an in-flight preset recording stoppable if the preset is deleted while recording.
+Preset IDs use the `preset_<uuid>` namespace and remain stable across settings writes and restarts. The shortcut binding uses the same ID, while runtime validity is checked against the actual persisted preset collection. Load normalization repairs malformed or duplicate preset identities by assigning a fresh ID and disabling ambiguous entries rather than allowing them to alias static shortcuts or another preset.
 
 The global **Post Processing** toggle remains a master/privacy switch. Presets remember their configured prompt while it is off, but no preset sends text to an AI provider until the global toggle is enabled.
 

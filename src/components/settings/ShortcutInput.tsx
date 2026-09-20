@@ -9,6 +9,8 @@ interface ShortcutInputProps {
   shortcutId: string;
   disabled?: boolean;
   allowCreate?: boolean;
+  title?: string;
+  description?: string;
 }
 
 /**

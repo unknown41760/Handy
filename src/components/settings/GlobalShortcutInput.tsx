@@ -19,6 +19,8 @@ interface GlobalShortcutInputProps {
   shortcutId: string;
   disabled?: boolean;
   allowCreate?: boolean;
+  title?: string;
+  description?: string;
 }
 
 export const GlobalShortcutInput: React.FC<GlobalShortcutInputProps> = ({
@@ -27,6 +29,8 @@ export const GlobalShortcutInput: React.FC<GlobalShortcutInputProps> = ({
   shortcutId,
   disabled = false,
   allowCreate = false,
+  title,
+  description,
 }) => {
   const { t } = useTranslation();
   const { getSetting, updateBinding, resetBinding, isUpdating, isLoading } =
@@ -187,8 +191,26 @@ export const GlobalShortcutInput: React.FC<GlobalShortcutInputProps> = ({
     if (editingShortcutId === id) return; // Already editing this shortcut
 
     // Suspend all bindings so no shortcut fires (or swallows the
-    // keystrokes) while keys are being recorded
-    await commands.suspendAllBindings().catch(console.error);
+    // keystrokes) while keys are being recorded. The backend refuses while a
+    // transcription is actively recording so its stop/release shortcut cannot
+    // be removed underneath the coordinator.
+    try {
+      const result = await commands.suspendAllBindings();
+      if (result.status === "error") {
+        toast.error(
+          t("settings.general.shortcut.errors.set", {
+            error: String(result.error),
+          }),
+        );
+        return;
+      }
+    } catch (error) {
+      console.error("Failed to suspend bindings:", error);
+      toast.error(
+        t("settings.general.shortcut.errors.set", { error: String(error) }),
+      );
+      return;
+    }
 
     // Store the original binding to restore if canceled
     setOriginalBinding(bindings[id]?.current_binding || "");
@@ -215,8 +237,8 @@ export const GlobalShortcutInput: React.FC<GlobalShortcutInputProps> = ({
   if (isLoading) {
     return (
       <SettingContainer
-        title={t("settings.general.shortcut.title")}
-        description={t("settings.general.shortcut.description")}
+        title={title ?? t("settings.general.shortcut.title")}
+        description={description ?? t("settings.general.shortcut.description")}
         descriptionMode={descriptionMode}
         grouped={grouped}
       >
@@ -231,8 +253,8 @@ export const GlobalShortcutInput: React.FC<GlobalShortcutInputProps> = ({
   if (Object.keys(bindings).length === 0) {
     return (
       <SettingContainer
-        title={t("settings.general.shortcut.title")}
-        description={t("settings.general.shortcut.description")}
+        title={title ?? t("settings.general.shortcut.title")}
+        description={description ?? t("settings.general.shortcut.description")}
         descriptionMode={descriptionMode}
         grouped={grouped}
       >
@@ -247,8 +269,8 @@ export const GlobalShortcutInput: React.FC<GlobalShortcutInputProps> = ({
   if (!binding && allowCreate) {
     return (
       <SettingContainer
-        title={t("settings.general.shortcut.title")}
-        description={t("settings.presets.shortcutRequired")}
+        title={title ?? t("settings.general.shortcut.title")}
+        description={description ?? t("settings.presets.shortcutRequired")}
         descriptionMode={descriptionMode}
         grouped={grouped}
         disabled={disabled}
@@ -276,8 +298,8 @@ export const GlobalShortcutInput: React.FC<GlobalShortcutInputProps> = ({
   if (!binding) {
     return (
       <SettingContainer
-        title={t("settings.general.shortcut.title")}
-        description={t("settings.general.shortcut.notFound")}
+        title={title ?? t("settings.general.shortcut.title")}
+        description={description ?? t("settings.general.shortcut.notFound")}
         descriptionMode={descriptionMode}
         grouped={grouped}
       >
@@ -289,14 +311,15 @@ export const GlobalShortcutInput: React.FC<GlobalShortcutInputProps> = ({
   }
 
   // Get translated name and description for the binding
-  const translatedName = t(
-    `settings.general.shortcut.bindings.${shortcutId}.name`,
-    binding.name,
-  );
-  const translatedDescription = t(
-    `settings.general.shortcut.bindings.${shortcutId}.description`,
-    binding.description,
-  );
+  const translatedName =
+    title ??
+    t(`settings.general.shortcut.bindings.${shortcutId}.name`, binding.name);
+  const translatedDescription =
+    description ??
+    t(
+      `settings.general.shortcut.bindings.${shortcutId}.description`,
+      binding.description,
+    );
 
   return (
     <SettingContainer

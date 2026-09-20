@@ -216,10 +216,11 @@ impl HandyKeysState {
         hotkey_to_binding: &mut HashMap<HotkeyId, (String, String)>,
         binding_id: &str,
     ) -> Result<(), String> {
-        if let Some(id) = binding_to_hotkey.remove(binding_id) {
+        if let Some(id) = binding_to_hotkey.get(binding_id).cloned() {
             manager
                 .unregister(id)
                 .map_err(|e| format!("Failed to unregister hotkey: {}", e))?;
+            binding_to_hotkey.remove(binding_id);
             hotkey_to_binding.remove(&id);
             debug!("Unregistered handy-keys shortcut: {}", binding_id);
         }
@@ -421,34 +422,52 @@ pub fn validate_shortcut(raw: &str) -> Result<(), String> {
         .map_err(|e| format!("Invalid shortcut for HandyKeys: {}", e))
 }
 
-/// Initialize handy-keys shortcuts
-pub fn init_shortcuts(app: &AppHandle) -> Result<(), String> {
+fn initialize_shortcuts_from_settings(
+    app: &AppHandle,
+    user_settings: &settings::AppSettings,
+) -> Result<(), String> {
     let state = HandyKeysState::new(app.clone())?;
-    let user_settings = settings::load_or_create_app_settings(app);
+    let mut registered_bindings: Vec<ShortcutBinding> = Vec::new();
 
-    // Register all persisted known bindings except cancel (which is dynamic).
     for (id, binding) in &user_settings.bindings {
         if id == "cancel" {
             continue;
         }
-        if !settings::is_known_shortcut_binding(&user_settings, id) {
+        if !settings::is_known_shortcut_binding(user_settings, id) {
             continue;
         }
-        if !settings::is_optional_shortcut_enabled(&user_settings, id) {
+        if !settings::is_optional_shortcut_enabled(user_settings, id) {
             continue;
         }
 
-        if let Err(e) = state.register(binding) {
-            error!(
+        if let Err(error) = state.register(binding) {
+            for registered_binding in registered_bindings.iter().rev() {
+                let _ = state.unregister(registered_binding);
+            }
+            return Err(format!(
                 "Failed to register handy-keys shortcut {} during init: {}",
-                id, e
-            );
+                id, error
+            ));
         }
+        registered_bindings.push(binding.clone());
     }
 
     app.manage(state);
     info!("handy-keys shortcuts initialized");
     Ok(())
+}
+
+pub fn init_shortcuts_with_settings(
+    app: &AppHandle,
+    user_settings: &settings::AppSettings,
+) -> Result<(), String> {
+    initialize_shortcuts_from_settings(app, user_settings)
+}
+
+/// Initialize handy-keys shortcuts
+pub fn init_shortcuts(app: &AppHandle) -> Result<(), String> {
+    let user_settings = settings::load_or_create_app_settings(app);
+    initialize_shortcuts_from_settings(app, &user_settings)
 }
 
 /// Register the cancel shortcut (called when recording starts)
@@ -529,6 +548,10 @@ pub fn start_handy_keys_recording(app: AppHandle, binding_id: String) -> Result<
     if crate::secure_input::is_enabled_now() {
         crate::secure_input::note_recorder_blocked(&app);
         return Err("secure-input-active".into());
+    }
+
+    if crate::settings::has_active_transcription_operation(&app) {
+        return Err("Cannot record a new shortcut while transcription is recording".to_string());
     }
 
     let state = app
