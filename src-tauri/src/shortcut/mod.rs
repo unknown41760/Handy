@@ -498,12 +498,19 @@ pub fn cancel_shortcut_capture_for_window_hide(app: &AppHandle) -> Result<(), St
         failures.push(error);
     }
 
-    let _ = app.emit("shortcut-capture-cancelled", ());
-
     if failures.is_empty() {
+        let _ = app.emit("shortcut-capture-cancelled", ());
         Ok(())
     } else {
-        Err(failures.join("; "))
+        // `resume_all_shortcuts` clears the ownership flag after its attempt so
+        // ordinary commit/cancel flows can finish. For native window close we
+        // deliberately retain ownership when restoration is incomplete: the
+        // visible settings UI remains the recovery surface and a later close
+        // can safely retry the idempotent restoration helpers.
+        SHORTCUT_CAPTURE_ACTIVE.store(true, std::sync::atomic::Ordering::SeqCst);
+        let error = failures.join("; ");
+        let _ = app.emit("shortcut-capture-cancel-failed", error.clone());
+        Err(error)
     }
 }
 

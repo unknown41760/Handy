@@ -52,7 +52,8 @@ export const GlobalShortcutInput: React.FC<GlobalShortcutInputProps> = ({
   // reopened settings window never remains in shortcut-capture mode.
   useEffect(() => {
     let active = true;
-    let unlisten: (() => void) | null = null;
+    let unlistenCancelled: (() => void) | null = null;
+    let unlistenFailed: (() => void) | null = null;
 
     listen("shortcut-capture-cancelled", () => {
       setEditingShortcutId(null);
@@ -61,7 +62,21 @@ export const GlobalShortcutInput: React.FC<GlobalShortcutInputProps> = ({
       setOriginalBinding("");
     }).then((stopListening) => {
       if (active) {
-        unlisten = stopListening;
+        unlistenCancelled = stopListening;
+      } else {
+        stopListening();
+      }
+    });
+
+    listen<string>("shortcut-capture-cancel-failed", (event) => {
+      console.error(
+        "Failed to restore shortcuts before hiding Settings:",
+        event.payload,
+      );
+      toast.error(t("settings.general.shortcut.errors.restore"));
+    }).then((stopListening) => {
+      if (active) {
+        unlistenFailed = stopListening;
       } else {
         stopListening();
       }
@@ -69,9 +84,10 @@ export const GlobalShortcutInput: React.FC<GlobalShortcutInputProps> = ({
 
     return () => {
       active = false;
-      unlisten?.();
+      unlistenCancelled?.();
+      unlistenFailed?.();
     };
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     // Only add event listeners when we're in editing mode

@@ -65,6 +65,7 @@ export const HandyKeysShortcutInput: React.FC<HandyKeysShortcutInputProps> = ({
   useEffect(() => {
     let active = true;
     let unlistenClose: (() => void) | null = null;
+    let unlistenFailed: (() => void) | null = null;
 
     listen("shortcut-capture-cancelled", () => {
       if (unlistenRef.current) {
@@ -85,11 +86,26 @@ export const HandyKeysShortcutInput: React.FC<HandyKeysShortcutInputProps> = ({
       }
     });
 
+    listen<string>("shortcut-capture-cancel-failed", (event) => {
+      console.error(
+        "Failed to restore shortcuts before hiding Settings:",
+        event.payload,
+      );
+      toast.error(t("settings.general.shortcut.errors.restore"));
+    }).then((stopListening) => {
+      if (active) {
+        unlistenFailed = stopListening;
+      } else {
+        stopListening();
+      }
+    });
+
     return () => {
       active = false;
       unlistenClose?.();
+      unlistenFailed?.();
     };
-  }, []);
+  }, [t]);
 
   // Handle cancellation
   const cancelRecording = useCallback(async () => {

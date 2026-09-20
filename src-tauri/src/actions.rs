@@ -8,9 +8,10 @@ use crate::managers::model::ModelManager;
 use crate::managers::transcription::StreamWorkKind;
 use crate::managers::transcription::TranscriptionManager;
 use crate::settings::{
-    clear_active_transcription_operation, get_settings, is_transcription_preset_binding,
-    persistent_transcription_operation, resolve_transcription_preset,
-    set_active_transcription_operation, take_active_transcription_operation,
+    clear_active_transcription_operation, clear_processing_transcription_model, get_settings,
+    is_transcription_preset_binding, persistent_transcription_operation,
+    resolve_transcription_preset, set_active_transcription_operation,
+    set_processing_transcription_model, take_active_transcription_operation,
     validate_preset_post_process_configuration, AppSettings, OverlayStyle,
     TranscriptionOperationConfig, APPLE_INTELLIGENCE_PROVIDER_ID,
 };
@@ -44,6 +45,7 @@ struct FinishGuard(AppHandle, Arc<TranscriptionManager>);
 impl Drop for FinishGuard {
     fn drop(&mut self) {
         self.1.maybe_unload_immediately("transcription session");
+        clear_processing_transcription_model(&self.0);
 
         // The operation snapshot is taken out of shared handoff state before
         // this async processing task starts. Do not clear that state here: a
@@ -751,7 +753,10 @@ impl ShortcutAction for TranscribeAction {
                 "Missing operation snapshot for '{}'; falling back to persistent settings",
                 binding_id
             );
-            persistent_transcription_operation(get_settings(app), self.post_process)
+            let operation =
+                persistent_transcription_operation(get_settings(app), self.post_process);
+            set_processing_transcription_model(app, operation.settings.selected_model.clone());
+            operation
         });
         let operation_settings = operation.settings;
         let post_process = operation.post_process;

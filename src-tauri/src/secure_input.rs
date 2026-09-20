@@ -484,6 +484,27 @@ mod imp {
         a.id == b.id && a.current_binding == b.current_binding
     }
 
+    fn mark_fallback_registrations_missing(state: &SecureInputState, bindings: &[ShortcutBinding]) {
+        if bindings.is_empty() {
+            return;
+        }
+
+        let mut fallback = state
+            .fallback
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        for binding in bindings {
+            fallback
+                .registered
+                .retain(|registered| !same_shadow(registered, binding));
+            fallback.covered.retain(|id| id != &binding.id);
+            fallback.degraded.retain(|id| id != &binding.id);
+            if !fallback.uncovered.contains(&binding.id) {
+                fallback.uncovered.push(binding.id.clone());
+            }
+        }
+    }
+
     /// Reconcile fallback registrations without replacing unchanged shadows.
     /// The operation mutex serializes reconciliations; fallback state is
     /// unlocked around plugin calls to avoid lock-order inversion.
@@ -750,6 +771,7 @@ mod imp {
                 crate::shortcut::tauri_impl::unregister_shortcut(app, binding.clone())
             {
                 let mut rollback_failures = Vec::new();
+                let mut missing_after_rollback = Vec::new();
                 for removed_binding in removed.iter().rev() {
                     if let Err(rollback_error) =
                         crate::shortcut::tauri_impl::ensure_shortcut_registered(
@@ -761,7 +783,14 @@ mod imp {
                             "{}: {}",
                             removed_binding.current_binding, rollback_error
                         ));
+                        missing_after_rollback.push(removed_binding.clone());
                     }
+                }
+                if !missing_after_rollback.is_empty() {
+                    mark_fallback_registrations_missing(state.inner(), &missing_after_rollback);
+                    drop(_operation);
+                    refresh_tray(app);
+                    emit_status(app);
                 }
                 let mut message = format!(
                     "Failed to suspend Secure Input fallback '{}' for '{}': {}",
@@ -791,16 +820,22 @@ mod imp {
             .lock()
             .map_err(|_| "Failed to lock Secure Input fallback operation".to_string())?;
         let mut failures = Vec::new();
+        let mut missing = Vec::new();
         for binding in bindings {
             if let Err(error) =
                 crate::shortcut::tauri_impl::ensure_shortcut_registered(app, binding.clone())
             {
                 failures.push(format!("{}: {}", binding.current_binding, error));
+                missing.push(binding.clone());
             }
         }
         if failures.is_empty() {
             Ok(())
         } else {
+            mark_fallback_registrations_missing(state.inner(), &missing);
+            drop(_operation);
+            refresh_tray(app);
+            emit_status(app);
             Err(failures.join("; "))
         }
     }

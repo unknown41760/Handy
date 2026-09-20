@@ -4,7 +4,7 @@ use crate::settings::{
     get_settings, reconcile_preset_model_capabilities, write_settings, AppSettings,
     ModelUnloadTimeout,
 };
-use log::error;
+use log::{error, warn};
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager, State};
 
@@ -148,6 +148,7 @@ pub fn reconcile_preset_capabilities_on_startup(app: &AppHandle) -> bool {
 fn restore_preset_shortcuts(
     app: &AppHandle,
     bindings: &[crate::settings::ShortcutBinding],
+    fallback_bindings: &[crate::settings::ShortcutBinding],
 ) -> Result<(), String> {
     let mut failures = Vec::new();
     for binding in bindings {
@@ -155,7 +156,32 @@ fn restore_preset_shortcuts(
             failures.push(format!("{}: {}", binding.id, error));
         }
     }
-    crate::secure_input::reconcile_fallback(app);
+
+    let fallback_restore_error =
+        crate::secure_input::restore_suspended_binding_fallback(app, fallback_bindings).err();
+
+    // A failed targeted restore marks the missing shadow as uncovered, so a
+    // checked reconciliation gets one immediate retry and keeps status truthful.
+    match crate::secure_input::reconcile_fallback_checked(app) {
+        Ok(()) => {
+            if let Some(error) = fallback_restore_error {
+                warn!(
+                    "Secure Input fallback restore initially failed but reconciliation recovered it: {}",
+                    error
+                );
+            }
+        }
+        Err(error) => {
+            if let Some(restore_error) = fallback_restore_error {
+                failures.push(format!(
+                    "Secure Input fallback restore: {}; reconcile: {}",
+                    restore_error, error
+                ));
+            } else {
+                failures.push(format!("Secure Input fallback reconcile: {}", error));
+            }
+        }
+    }
 
     if failures.is_empty() {
         Ok(())
@@ -167,9 +193,10 @@ fn restore_preset_shortcuts(
 fn model_delete_error_with_rollback(
     app: &AppHandle,
     bindings: &[crate::settings::ShortcutBinding],
+    fallback_bindings: &[crate::settings::ShortcutBinding],
     primary: String,
 ) -> String {
-    match restore_preset_shortcuts(app, bindings) {
+    match restore_preset_shortcuts(app, bindings, fallback_bindings) {
         Ok(()) => primary,
         Err(restore_error) => format!(
             "{}; preset-shortcut rollback incomplete: {}",
@@ -189,6 +216,12 @@ pub async fn delete_model(
     if crate::settings::has_active_transcription_operation(&app_handle) {
         return Err("Cannot delete a model while a transcription recording is active".to_string());
     }
+    if crate::settings::is_transcription_model_processing(&app_handle, &model_id) {
+        return Err(
+            "Cannot delete this model while a transcription operation is still processing"
+                .to_string(),
+        );
+    }
 
     let settings_before = get_settings(&app_handle);
     let deleting_selected_model = settings_before.selected_model == model_id;
@@ -207,11 +240,30 @@ pub async fn delete_model(
         .collect::<Vec<_>>();
 
     let mut unregistered = Vec::new();
+    let mut suspended_fallback = Vec::new();
     for binding in &bindings_to_unregister {
+        let fallback = match crate::secure_input::suspend_binding_fallback(&app_handle, &binding.id)
+        {
+            Ok(fallback) => fallback,
+            Err(error) => {
+                return Err(model_delete_error_with_rollback(
+                    &app_handle,
+                    &unregistered,
+                    &suspended_fallback,
+                    format!(
+                        "Failed to suspend Secure Input fallback for preset '{}' before deleting model: {}",
+                        binding.id, error
+                    ),
+                ));
+            }
+        };
+        suspended_fallback.extend(fallback);
+
         if let Err(error) = crate::shortcut::unregister_shortcut(&app_handle, binding.clone()) {
             return Err(model_delete_error_with_rollback(
                 &app_handle,
                 &unregistered,
+                &suspended_fallback,
                 format!(
                     "Failed to unregister preset shortcut '{}' before deleting model: {}",
                     binding.id, error
@@ -221,11 +273,27 @@ pub async fn delete_model(
         unregistered.push(binding.clone());
     }
 
+    // A shortcut may have fired after the initial guard but before its primary
+    // and Carbon registrations were removed. Re-check after teardown and abort
+    // before touching the model if an operation won that race.
+    if crate::settings::has_active_transcription_operation(&app_handle)
+        || crate::settings::is_transcription_model_processing(&app_handle, &model_id)
+    {
+        return Err(model_delete_error_with_rollback(
+            &app_handle,
+            &unregistered,
+            &suspended_fallback,
+            "Cannot delete the model because a transcription operation started while deletion was being prepared"
+                .to_string(),
+        ));
+    }
+
     if deleting_loaded_model {
         if let Err(error) = transcription_manager.unload_model() {
             return Err(model_delete_error_with_rollback(
                 &app_handle,
                 &unregistered,
+                &suspended_fallback,
                 format!("Failed to unload model: {}", error),
             ));
         }
@@ -235,6 +303,7 @@ pub async fn delete_model(
         return Err(model_delete_error_with_rollback(
             &app_handle,
             &unregistered,
+            &suspended_fallback,
             error.to_string(),
         ));
     }
@@ -244,7 +313,12 @@ pub async fn delete_model(
         "settings-changed",
         serde_json::json!({ "setting": "transcription_presets" }),
     );
-    crate::secure_input::reconcile_fallback(&app_handle);
+    if let Err(error) = crate::secure_input::reconcile_fallback_checked(&app_handle) {
+        warn!(
+            "Failed to reconcile Secure Input fallback after model deletion: {}",
+            error
+        );
+    }
 
     Ok(())
 }

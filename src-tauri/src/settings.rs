@@ -127,34 +127,70 @@ pub struct TranscriptionOperationConfig {
 }
 
 #[derive(Default)]
-pub struct ActiveTranscriptionState(Mutex<Option<TranscriptionOperationConfig>>);
+struct TranscriptionOperationState {
+    active: Option<TranscriptionOperationConfig>,
+    processing_model_id: Option<String>,
+}
+
+#[derive(Default)]
+pub struct ActiveTranscriptionState(Mutex<TranscriptionOperationState>);
 
 impl ActiveTranscriptionState {
     pub(crate) fn set(&self, config: TranscriptionOperationConfig) {
-        *self
-            .0
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(config);
-    }
-
-    pub(crate) fn take(&self) -> Option<TranscriptionOperationConfig> {
         self.0
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .take()
+            .active = Some(config);
+    }
+
+    /// Move the recording snapshot into processing ownership. The model ID is
+    /// retained separately until the async pipeline finishes so model deletion
+    /// cannot invalidate the immutable operation after recording has stopped.
+    pub(crate) fn take_for_processing(&self) -> Option<TranscriptionOperationConfig> {
+        let mut state = self
+            .0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let config = state.active.take()?;
+        state.processing_model_id = Some(config.settings.selected_model.clone());
+        Some(config)
+    }
+
+    pub(crate) fn set_processing_model(&self, model_id: String) {
+        self.0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .processing_model_id = Some(model_id);
+    }
+
+    pub(crate) fn clear_processing_model(&self) {
+        self.0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .processing_model_id = None;
+    }
+
+    pub(crate) fn processing_model_is(&self, model_id: &str) -> bool {
+        self.0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .processing_model_id
+            .as_deref()
+            == Some(model_id)
     }
 
     pub(crate) fn clear(&self) {
-        *self
-            .0
+        self.0
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .active = None;
     }
 
     pub(crate) fn is_active(&self) -> bool {
         self.0
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .active
             .is_some()
     }
 
@@ -162,6 +198,7 @@ impl ActiveTranscriptionState {
         self.0
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .active
             .as_ref()
             .and_then(|config| config.preset_id.clone())
     }
@@ -1408,7 +1445,24 @@ pub fn take_active_transcription_operation(
     app: &AppHandle,
 ) -> Option<TranscriptionOperationConfig> {
     app.try_state::<ActiveTranscriptionState>()
-        .and_then(|state| state.take())
+        .and_then(|state| state.take_for_processing())
+}
+
+pub fn set_processing_transcription_model(app: &AppHandle, model_id: String) {
+    if let Some(state) = app.try_state::<ActiveTranscriptionState>() {
+        state.set_processing_model(model_id);
+    }
+}
+
+pub fn clear_processing_transcription_model(app: &AppHandle) {
+    if let Some(state) = app.try_state::<ActiveTranscriptionState>() {
+        state.clear_processing_model();
+    }
+}
+
+pub fn is_transcription_model_processing(app: &AppHandle, model_id: &str) -> bool {
+    app.try_state::<ActiveTranscriptionState>()
+        .is_some_and(|state| state.processing_model_is(model_id))
 }
 
 pub fn clear_active_transcription_operation(app: &AppHandle) {
@@ -1960,27 +2014,36 @@ mod tests {
         state.set(persistent_transcription_operation(first_settings, false));
         assert!(state.is_active());
 
-        let first = state.take().expect("recording operation should be present");
+        let first = state
+            .take_for_processing()
+            .expect("recording operation should be present");
         assert_eq!(first.settings.selected_model, "preset-model-a");
-        assert!(state.take().is_none());
+        assert!(state.take_for_processing().is_none());
+        assert!(state.processing_model_is("preset-model-a"));
 
-        // Once the completed recording has taken its immutable snapshot, a
-        // queued recording can safely install a new one without any later
-        // processing cleanup erasing it.
+        // Processing keeps the completed operation's model protected until
+        // the async finish guard releases it. Only after that can the queued
+        // recording move its own immutable snapshot into processing.
+        state.clear_processing_model();
+        assert!(!state.processing_model_is("preset-model-a"));
+
         let mut queued_settings = get_default_settings();
         queued_settings.selected_model = "preset-model-b".to_string();
         state.set(persistent_transcription_operation(queued_settings, false));
-        assert_eq!(
-            state.take().unwrap().settings.selected_model,
-            "preset-model-b"
-        );
+        let queued = state
+            .take_for_processing()
+            .expect("queued operation should be present");
+        assert_eq!(queued.settings.selected_model, "preset-model-b");
+        assert!(state.processing_model_is("preset-model-b"));
+        state.clear_processing_model();
+        assert!(!state.processing_model_is("preset-model-b"));
 
         state.set(persistent_transcription_operation(
             get_default_settings(),
             false,
         ));
         state.clear();
-        assert!(state.take().is_none());
+        assert!(state.take_for_processing().is_none());
     }
 
     /// Frozen snapshot of a real v0.9.0-era settings store, as written to
