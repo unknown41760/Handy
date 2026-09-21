@@ -514,6 +514,21 @@ pub fn cancel_shortcut_capture_for_window_hide(app: &AppHandle) -> Result<(), St
     }
 }
 
+fn next_transcription_preset_name(app_settings: &settings::AppSettings) -> String {
+    let mut index = 1usize;
+    loop {
+        let candidate = format!("Preset {}", index);
+        if !app_settings
+            .transcription_presets
+            .iter()
+            .any(|preset| preset.name.trim() == candidate)
+        {
+            return candidate;
+        }
+        index += 1;
+    }
+}
+
 fn create_transcription_preset_in_settings(
     app_settings: &mut settings::AppSettings,
     id: String,
@@ -530,7 +545,7 @@ fn create_transcription_preset_in_settings(
 
     let preset = TranscriptionPreset {
         id,
-        name: format!("Preset {}", app_settings.transcription_presets.len() + 1),
+        name: next_transcription_preset_name(app_settings),
         enabled: false,
         model_id: String::new(),
         language: "auto".to_string(),
@@ -1756,20 +1771,41 @@ pub fn change_post_process_model_setting(
     provider_id: String,
     model: String,
 ) -> Result<(), String> {
-    let mut settings = settings::get_settings(&app);
-    validate_provider_exists(&settings, &provider_id)?;
-    settings.post_process_models.insert(provider_id, model);
-    settings::write_settings(&app, settings);
+    let current_settings = settings::get_settings(&app);
+    validate_provider_exists(&current_settings, &provider_id)?;
+
+    let clearing_active_model = current_settings.post_process_enabled
+        && current_settings.post_process_provider_id == provider_id
+        && model.trim().is_empty();
+
+    if clearing_active_model {
+        change_post_process_enabled_setting(app.clone(), false)?;
+    }
+
+    let mut app_settings = settings::get_settings(&app);
+    app_settings.post_process_models.insert(provider_id, model);
+    settings::write_settings(&app, app_settings);
     Ok(())
 }
 
 #[tauri::command]
 #[specta::specta]
 pub fn set_post_process_provider(app: AppHandle, provider_id: String) -> Result<(), String> {
-    let mut settings = settings::get_settings(&app);
-    validate_provider_exists(&settings, &provider_id)?;
-    settings.post_process_provider_id = provider_id;
-    settings::write_settings(&app, settings);
+    let current_settings = settings::get_settings(&app);
+    validate_provider_exists(&current_settings, &provider_id)?;
+
+    let target_has_model = current_settings
+        .post_process_models
+        .get(&provider_id)
+        .is_some_and(|model| !model.trim().is_empty());
+
+    if current_settings.post_process_enabled && !target_has_model {
+        change_post_process_enabled_setting(app.clone(), false)?;
+    }
+
+    let mut app_settings = settings::get_settings(&app);
+    app_settings.post_process_provider_id = provider_id;
+    settings::write_settings(&app, app_settings);
     Ok(())
 }
 
@@ -2266,6 +2302,21 @@ mod preset_tests {
             "preset_over_limit".to_string()
         )
         .is_err());
+    }
+
+    #[test]
+    fn dynamic_preset_default_name_uses_first_available_slot() {
+        let mut app_settings = get_default_settings();
+        let mut second = test_preset("preset_existing");
+        second.name = "Preset 2".to_string();
+        app_settings.transcription_presets.push(second);
+
+        let created =
+            create_transcription_preset_in_settings(&mut app_settings, "preset_new".to_string())
+                .unwrap();
+
+        assert_eq!(created.name, "Preset 1");
+        assert_eq!(app_settings.transcription_presets[0].name, "Preset 2");
     }
 
     #[test]

@@ -434,7 +434,10 @@ export const useSettingsStore = create<SettingsStore>()(
       setPostProcessModelOptions(providerId, []);
 
       try {
-        await commands.setPostProcessProvider(providerId);
+        const result = await commands.setPostProcessProvider(providerId);
+        if (result.status === "error") {
+          throw new Error(result.error);
+        }
         await refreshSettings();
       } catch (error) {
         console.error("Failed to set post-process provider:", error);
@@ -462,12 +465,15 @@ export const useSettingsStore = create<SettingsStore>()(
       setUpdating(updateKey, true);
 
       try {
-        if (settingType === "base_url") {
-          await commands.changePostProcessBaseUrlSetting(providerId, value);
-        } else if (settingType === "api_key") {
-          await commands.changePostProcessApiKeySetting(providerId, value);
-        } else if (settingType === "model") {
-          await commands.changePostProcessModelSetting(providerId, value);
+        const result =
+          settingType === "base_url"
+            ? await commands.changePostProcessBaseUrlSetting(providerId, value)
+            : settingType === "api_key"
+              ? await commands.changePostProcessApiKeySetting(providerId, value)
+              : await commands.changePostProcessModelSetting(providerId, value);
+
+        if (result.status === "error") {
+          throw new Error(result.error);
         }
         await refreshSettings();
       } catch (error) {

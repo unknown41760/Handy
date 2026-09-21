@@ -119,14 +119,6 @@ const PresetCard: React.FC<PresetCardProps> = ({ preset }) => {
   const hasShortcut = Boolean(settings?.bindings?.[preset.id]);
 
   const deletePreset = async () => {
-    if (
-      !window.confirm(
-        t("settings.presets.deleteConfirm", { name: preset.name }),
-      )
-    ) {
-      return;
-    }
-
     setSaving(true);
     try {
       const result = await commands.deleteTranscriptionPreset(preset.id);
@@ -356,22 +348,11 @@ export const PresetsSettings: React.FC = () => {
 
   return (
     <div className="max-w-3xl w-full mx-auto space-y-6">
-      <div className="px-4 flex items-start justify-between gap-4">
-        <div>
-          <h1 className="text-lg font-semibold">
-            {t("settings.presets.title")}
-          </h1>
-          <p className="text-sm text-mid-gray mt-1">
-            {t("settings.presets.description")}
-          </p>
-        </div>
-        <Button
-          size="sm"
-          onClick={() => void createPreset()}
-          disabled={creating || atLimit}
-        >
-          {t("settings.presets.addPreset")}
-        </Button>
+      <div className="px-4">
+        <h1 className="text-lg font-semibold">{t("settings.presets.title")}</h1>
+        <p className="text-sm text-mid-gray mt-1">
+          {t("settings.presets.description")}
+        </p>
       </div>
 
       {presets.length === 0 ? (
@@ -380,9 +361,30 @@ export const PresetsSettings: React.FC = () => {
           <p className="text-sm text-mid-gray mt-1">
             {t("settings.presets.emptyDescription")}
           </p>
+          <Button
+            size="md"
+            className="mt-4"
+            onClick={() => void createPreset()}
+            disabled={creating || atLimit}
+          >
+            {t("settings.presets.addPreset")}
+          </Button>
         </div>
       ) : (
-        presets.map((preset) => <PresetCard key={preset.id} preset={preset} />)
+        <>
+          {presets.map((preset) => (
+            <PresetCard key={preset.id} preset={preset} />
+          ))}
+          <div className="px-4">
+            <Button
+              size="md"
+              onClick={() => void createPreset()}
+              disabled={creating || atLimit}
+            >
+              {t("settings.presets.addPreset")}
+            </Button>
+          </div>
+        </>
       )}
 
       {atLimit && (
