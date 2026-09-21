@@ -1764,6 +1764,24 @@ pub fn change_post_process_api_key_setting(
     Ok(())
 }
 
+fn reconcile_presets_for_active_post_process_model(settings: &mut settings::AppSettings) {
+    let active_provider_has_model = settings
+        .post_process_models
+        .get(&settings.post_process_provider_id)
+        .is_some_and(|model| !model.trim().is_empty());
+
+    if active_provider_has_model {
+        return;
+    }
+
+    // Keep the global AI post-processing master unchanged so its configuration
+    // panel stays available. Presets cannot keep requesting post-processing
+    // when the currently selected provider has no usable model, though.
+    for preset in &mut settings.transcription_presets {
+        preset.post_process = false;
+    }
+}
+
 #[tauri::command]
 #[specta::specta]
 pub fn change_post_process_model_setting(
@@ -1771,19 +1789,11 @@ pub fn change_post_process_model_setting(
     provider_id: String,
     model: String,
 ) -> Result<(), String> {
-    let current_settings = settings::get_settings(&app);
-    validate_provider_exists(&current_settings, &provider_id)?;
-
-    let clearing_active_model = current_settings.post_process_enabled
-        && current_settings.post_process_provider_id == provider_id
-        && model.trim().is_empty();
-
-    if clearing_active_model {
-        change_post_process_enabled_setting(app.clone(), false)?;
-    }
-
     let mut app_settings = settings::get_settings(&app);
+    validate_provider_exists(&app_settings, &provider_id)?;
+
     app_settings.post_process_models.insert(provider_id, model);
+    reconcile_presets_for_active_post_process_model(&mut app_settings);
     settings::write_settings(&app, app_settings);
     Ok(())
 }
@@ -1791,20 +1801,11 @@ pub fn change_post_process_model_setting(
 #[tauri::command]
 #[specta::specta]
 pub fn set_post_process_provider(app: AppHandle, provider_id: String) -> Result<(), String> {
-    let current_settings = settings::get_settings(&app);
-    validate_provider_exists(&current_settings, &provider_id)?;
-
-    let target_has_model = current_settings
-        .post_process_models
-        .get(&provider_id)
-        .is_some_and(|model| !model.trim().is_empty());
-
-    if current_settings.post_process_enabled && !target_has_model {
-        change_post_process_enabled_setting(app.clone(), false)?;
-    }
-
     let mut app_settings = settings::get_settings(&app);
+    validate_provider_exists(&app_settings, &provider_id)?;
+
     app_settings.post_process_provider_id = provider_id;
+    reconcile_presets_for_active_post_process_model(&mut app_settings);
     settings::write_settings(&app, app_settings);
     Ok(())
 }
@@ -2137,8 +2138,8 @@ mod tests {
 mod preset_tests {
     use super::{
         create_transcription_preset_in_settings, prepare_settings_for_implementation,
-        reconcile_presets_for_deleted_prompt, validate_binding_conflict,
-        validate_enabled_preset_shortcuts_for_implementation,
+        reconcile_presets_for_active_post_process_model, reconcile_presets_for_deleted_prompt,
+        validate_binding_conflict, validate_enabled_preset_shortcuts_for_implementation,
     };
     use crate::settings::{
         self, get_default_settings, normalize_preset_language_for_model, KeyboardImplementation,
@@ -2317,6 +2318,33 @@ mod preset_tests {
 
         assert_eq!(created.name, "Preset 1");
         assert_eq!(app_settings.transcription_presets[0].name, "Preset 2");
+    }
+
+    #[test]
+    fn missing_active_post_process_model_disables_presets_not_global_master() {
+        let mut app_settings = get_default_settings();
+        app_settings.post_process_enabled = true;
+
+        let provider_id = app_settings.post_process_provider_id.clone();
+        app_settings
+            .post_process_models
+            .insert(provider_id.clone(), "configured-model".to_string());
+
+        let mut preset = test_preset("preset_post_process");
+        preset.post_process = true;
+        app_settings.transcription_presets.push(preset);
+
+        reconcile_presets_for_active_post_process_model(&mut app_settings);
+        assert!(app_settings.post_process_enabled);
+        assert!(app_settings.transcription_presets[0].post_process);
+
+        app_settings
+            .post_process_models
+            .insert(provider_id, String::new());
+        reconcile_presets_for_active_post_process_model(&mut app_settings);
+
+        assert!(app_settings.post_process_enabled);
+        assert!(!app_settings.transcription_presets[0].post_process);
     }
 
     #[test]
