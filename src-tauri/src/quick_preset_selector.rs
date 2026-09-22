@@ -15,8 +15,8 @@ use tauri::{AppHandle, Emitter, Manager, Position, WebviewUrl, WebviewWindowBuil
 
 pub const QUICK_SELECTOR_BINDING_ID: &str = "quick_preset_selector";
 const WINDOW_LABEL: &str = "quick_preset_selector";
-const WINDOW_SIZE: f64 = 420.0;
-const SELECTION_DEAD_ZONE: f64 = 58.0;
+const WINDOW_SIZE: f64 = 210.0;
+const SELECTION_DEAD_ZONE: f64 = 22.0;
 
 #[derive(Clone, Debug, Serialize, Type)]
 pub struct EffectiveTranscriptionTarget {
@@ -502,7 +502,7 @@ fn hide_now(app: &AppHandle) {
 fn hide_after_confirmation(app: &AppHandle, generation: u64) {
     let handle = app.clone();
     std::thread::spawn(move || {
-        std::thread::sleep(Duration::from_millis(650));
+        std::thread::sleep(Duration::from_millis(440));
         let should_hide = handle
             .try_state::<QuickPresetSelectorState>()
             .is_some_and(|state| state.generation.load(Ordering::SeqCst) == generation);
@@ -654,8 +654,8 @@ mod tests {
         assert_eq!(slot_for_cursor(session, (100, 200)), Some(5));
         assert_eq!(slot_for_cursor(session, (0, 100)), Some(7));
         assert_eq!(slot_for_cursor(session, (110, 110)), None);
-        assert_eq!(slot_for_cursor(session, (100, 45)), None);
-        assert_eq!(slot_for_cursor(session, (100, 40)), Some(1));
+        assert_eq!(slot_for_cursor(session, (100, 79)), None);
+        assert_eq!(slot_for_cursor(session, (100, 77)), Some(1));
     }
 
     #[test]

@@ -13,11 +13,11 @@ import {
 } from "@/bindings";
 import { useTranslation } from "react-i18next";
 
-const CENTER = 210;
-const INNER_RADIUS = 69;
-const OUTER_RADIUS = 174;
-const LABEL_RADIUS = 122;
-const DEAD_ZONE = 58;
+const CENTER = 105;
+const INNER_RADIUS = 25;
+const OUTER_RADIUS = 96;
+const LABEL_RADIUS = 62;
+const DEAD_ZONE = 22;
 const SLOT_ANGLE = Math.PI / 4;
 const HALF_PETAL_ANGLE = SLOT_ANGLE / 2 - 0.035;
 
@@ -36,7 +36,7 @@ const petalPath = (slot: number): string => {
   const rightAngle = centerAngle + HALF_PETAL_ANGLE;
   const outerRoundAngle = 0.06;
   const innerRoundAngle = 0.09;
-  const cornerDepth = 12;
+  const cornerDepth = 6;
 
   const outerStart = polarPoint(OUTER_RADIUS, leftAngle + outerRoundAngle);
   const outerEnd = polarPoint(OUTER_RADIUS, rightAngle - outerRoundAngle);
@@ -177,45 +177,20 @@ export default function QuickPresetSelector() {
       }
       onMouseLeave={() => setHighlightedSlot(null)}
     >
-      <div className="flower-ambient" aria-hidden="true" />
       <svg
         className="quick-selector-flower"
-        viewBox="0 0 420 420"
+        viewBox="0 0 210 210"
         role="group"
         aria-label={t("settings.presets.quickSelector")}
       >
-        <defs>
-          <radialGradient id="petal-surface" cx="50%" cy="30%" r="80%">
-            <stop offset="0%" stopColor="rgba(78, 76, 86, 0.72)" />
-            <stop offset="100%" stopColor="rgba(24, 23, 29, 0.88)" />
-          </radialGradient>
-          <radialGradient id="petal-active" cx="48%" cy="50%" r="75%">
-            <stop offset="0%" stopColor="rgba(210, 84, 177, 0.62)" />
-            <stop offset="100%" stopColor="rgba(94, 39, 83, 0.82)" />
-          </radialGradient>
-          <filter id="pink-glow" x="-60%" y="-60%" width="220%" height="220%">
-            <feGaussianBlur stdDeviation="7" result="blur" />
-            <feFlood floodColor="#ff63da" floodOpacity="0.72" />
-            <feComposite in2="blur" operator="in" />
-            <feMerge>
-              <feMergeNode />
-              <feMergeNode in="SourceGraphic" />
-            </feMerge>
-          </filter>
-          <filter id="soft-shadow" x="-30%" y="-30%" width="160%" height="160%">
-            <feDropShadow dx="0" dy="8" stdDeviation="9" floodOpacity="0.42" />
-          </filter>
-        </defs>
-
         {(payload?.slots ?? []).map((slot) => {
           const angle = (slot.slot - 1) * SLOT_ANGLE;
           const labelPosition = polarPoint(LABEL_RADIUS, angle);
           const populated = slot.slot === 1 || Boolean(slot.preset_id);
           const highlighted = highlightedSlot === slot.slot;
           const label = slotLabel(slot, defaultLabel, emptyLabel);
-          const pushDistance = highlighted && populated ? 4 : 0;
+          const pushDistance = highlighted && populated ? 1.5 : 0;
           const style = {
-            "--slot-index": slot.slot - 1,
             "--push-x": `${Math.sin(angle) * pushDistance}px`,
             "--push-y": `${-Math.cos(angle) * pushDistance}px`,
             transformOrigin: `${labelPosition.x}px ${labelPosition.y}px`,
@@ -244,10 +219,10 @@ export default function QuickPresetSelector() {
                 />
                 <foreignObject
                   className="quick-petal-copy"
-                  x={labelPosition.x - 49}
-                  y={labelPosition.y - 29}
-                  width="98"
-                  height="58"
+                  x={labelPosition.x - 28}
+                  y={labelPosition.y - 17}
+                  width="56"
+                  height="34"
                   aria-hidden="true"
                 >
                   <div className="quick-petal-label">
@@ -262,38 +237,14 @@ export default function QuickPresetSelector() {
 
         <g className="quick-selector-center" aria-hidden="true">
           <circle
-            className="quick-selector-center-glow"
-            cx={CENTER}
-            cy={CENTER}
-            r="58"
-          />
-          <circle
             className="quick-selector-center-surface"
             cx={CENTER}
             cy={CENTER}
-            r="55"
+            r="16"
           />
-          {confirmation ? (
+          {confirmation && (
             <g className="quick-confirmation-mark">
-              <path d="M190 208.5 203.5 222 231 194.5" />
-              <foreignObject x="165" y="226" width="90" height="28">
-                <div className="quick-confirmation-name">
-                  {confirmation.preset_id
-                    ? confirmation.preset_name
-                    : defaultLabel}
-                </div>
-              </foreignObject>
-            </g>
-          ) : (
-            <g className="quick-cursor-mark">
-              <path
-                className="quick-cursor-fill"
-                d="M196 184v48l11-10 8 18 9-4-8-18h15z"
-              />
-              <path
-                className="quick-cursor-edge"
-                d="M196 184v48l11-10 8 18 9-4-8-18h15z"
-              />
+              <path d="M97.5 105 102.5 110 113 99.5" />
             </g>
           )}
         </g>
