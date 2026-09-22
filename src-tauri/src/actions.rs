@@ -9,7 +9,7 @@ use crate::managers::transcription::StreamWorkKind;
 use crate::managers::transcription::TranscriptionManager;
 use crate::settings::{
     clear_active_transcription_operation, clear_processing_transcription_model, get_settings,
-    is_transcription_preset_binding, persistent_transcription_operation,
+    is_transcription_preset_binding, resolve_active_transcription_operation,
     resolve_transcription_preset, set_active_transcription_operation,
     set_processing_transcription_model, take_active_transcription_operation,
     validate_preset_post_process_configuration, AppSettings, OverlayStyle,
@@ -530,7 +530,7 @@ impl ShortcutAction for TranscribeAction {
                 }
             }
         } else {
-            persistent_transcription_operation(persistent_settings, self.post_process)
+            resolve_active_transcription_operation(persistent_settings, self.post_process)
         };
 
         if let Err(err) = validate_transcription_operation(app, &operation) {
@@ -549,6 +549,7 @@ impl ShortcutAction for TranscribeAction {
             let _ = app.emit("transcription-error", err);
             return;
         }
+        crate::quick_preset_selector::emit_effective_transcription_target(app);
 
         // Load model in the background
         let tm = app.state::<Arc<TranscriptionManager>>();
@@ -683,6 +684,7 @@ impl ShortcutAction for TranscribeAction {
             // Revert UI state so we don't stay stuck in the recording overlay.
             tm.cancel_stream();
             clear_active_transcription_operation(app);
+            crate::quick_preset_selector::emit_effective_transcription_target(app);
             utils::hide_recording_overlay(app);
             set_tray_state(app, TrayIconState::Idle);
             if let Some(err) = recording_error {
@@ -753,11 +755,20 @@ impl ShortcutAction for TranscribeAction {
                 "Missing operation snapshot for '{}'; falling back to persistent settings",
                 binding_id
             );
-            let operation =
-                persistent_transcription_operation(get_settings(app), self.post_process);
+            let persistent_settings = get_settings(app);
+            let operation = self
+                .preset_id
+                .as_deref()
+                .and_then(|preset_id| {
+                    resolve_transcription_preset(&persistent_settings, preset_id).ok()
+                })
+                .unwrap_or_else(|| {
+                    resolve_active_transcription_operation(persistent_settings, self.post_process)
+                });
             set_processing_transcription_model(app, operation.settings.selected_model.clone());
             operation
         });
+        crate::quick_preset_selector::emit_effective_transcription_target(app);
         let operation_settings = operation.settings;
         let post_process = operation.post_process;
         let cancel_generation = rm.cancel_generation();
@@ -993,6 +1004,7 @@ impl ShortcutAction for CancelAction {
     fn start(&self, app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {
         utils::cancel_current_operation(app);
         clear_active_transcription_operation(app);
+        crate::quick_preset_selector::emit_effective_transcription_target(app);
     }
 
     fn stop(&self, _app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {
@@ -1066,13 +1078,19 @@ pub fn resolve_action(binding_id: &str) -> Option<Arc<dyn ShortcutAction>> {
 #[cfg(test)]
 mod tests {
     use super::{
-        complete_unless_cancelled, is_blank_transcription, should_use_streaming_overlay,
-        strip_think_block,
+        complete_unless_cancelled, is_blank_transcription, resolve_action,
+        should_use_streaming_overlay, strip_think_block,
     };
     use crate::settings::OverlayStyle;
     use std::future;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
+
+    #[test]
+    fn dynamic_preset_direct_shortcuts_still_resolve_to_transcription_actions() {
+        assert!(resolve_action("preset_stable_identity").is_some());
+        assert!(resolve_action("not_a_preset").is_none());
+    }
     use std::thread;
     use std::time::Duration;
 

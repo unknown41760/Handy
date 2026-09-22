@@ -45,6 +45,31 @@ async updateTranscriptionPreset(preset: TranscriptionPreset) : Promise<Result<nu
     else return { status: "error", error: e  as any };
 }
 },
+async setActiveTranscriptionPreset(presetId: string | null) : Promise<Result<ActivePresetSelection, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_active_transcription_preset", { presetId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async getEffectiveTranscriptionTarget() : Promise<EffectiveTranscriptionTarget> {
+    return await TAURI_INVOKE("get_effective_transcription_target");
+},
+async getQuickPresetSelectorPayload() : Promise<QuickPresetSelectorPayload> {
+    return await TAURI_INVOKE("get_quick_preset_selector_payload");
+},
+async selectQuickPresetSlot(slot: number) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("select_quick_preset_slot", { slot }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async closeQuickPresetSelector() : Promise<null> {
+    return await TAURI_INVOKE("close_quick_preset_selector");
+},
 async changeShortcutActivationSetting(activation: ShortcutActivation) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("change_shortcut_activation_setting", { activation }) };
@@ -1001,7 +1026,7 @@ hold_threshold_ms?: number; audio_feedback?: boolean; audio_feedback_volume?: nu
  * upgrading from before this key existed are blanked by the migration so they
  * see the current release's notes — see `apply_settings_migrations`.
  */
-whats_new_last_seen_version?: string; selected_model?: string; transcription_presets?: TranscriptionPreset[]; onboarding_completed?: boolean; always_on_microphone?: boolean; selected_microphone?: string | null;
+whats_new_last_seen_version?: string; selected_model?: string; transcription_presets?: TranscriptionPreset[]; active_transcription_preset_id?: string | null; onboarding_completed?: boolean; always_on_microphone?: boolean; selected_microphone?: string | null;
 /**
  * Which input channel to use on the selected microphone device.
  * None means "average all channels" (original behavior).
@@ -1032,6 +1057,7 @@ overlay_style?: OverlayStyle }
 export type AudioDevice = { index: string; name: string; is_default: boolean }
 export type AutoSubmitKey = "enter" | "ctrl_enter" | "cmd_enter"
 export type AvailableAccelerators = { transcribe: string[]; ort: string[]; gpu_devices: GpuDeviceOption[] }
+export type ActivePresetSelection = { preset_id: string | null; preset_name: string; model_id: string }
 export type BindingResponse = { success: boolean; binding: ShortcutBinding | null; error: string | null }
 export type ClipboardHandling = "dont_modify" | "copy_to_clipboard"
 export type CustomSounds = { start: boolean; stop: boolean }
@@ -1154,7 +1180,10 @@ export type ShortcutActivation =
  */
 "hold_or_toggle"
 export type ShortcutBinding = { id: string; name: string; description: string; default_binding: string; current_binding: string }
-export type TranscriptionPreset = { id: string; name: string; enabled: boolean; model_id: string; language: string; translate_to_english: boolean; post_process: boolean; post_process_prompt_id: string | null }
+export type TranscriptionPreset = { id: string; name: string; enabled: boolean; model_id: string; language: string; translate_to_english: boolean; post_process: boolean; post_process_prompt_id: string | null; quick_slot: number | null }
+export type EffectiveTranscriptionTarget = { preset_id: string | null; preset_name: string | null; model_id: string; recording: boolean }
+export type QuickPresetSlot = { slot: number; preset_id: string | null; name: string; active: boolean }
+export type QuickPresetSelectorPayload = { slots: QuickPresetSlot[]; active_preset_id: string | null }
 export type SoundTheme = "marimba" | "pop" | "custom"
 /**
  * Phase of the streaming overlay card, emitted to drive its UI state.

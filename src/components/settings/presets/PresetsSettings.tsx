@@ -117,6 +117,16 @@ const PresetCard: React.FC<PresetCardProps> = ({ preset }) => {
   const translateAvailable = selectedModel?.supports_translation ?? false;
   const globalPostProcessingEnabled = settings?.post_process_enabled ?? false;
   const hasShortcut = Boolean(settings?.bindings?.[preset.id]);
+  const quickSlotOptions = useMemo(
+    () => [
+      { value: "none", label: t("settings.presets.quickSlotNone") },
+      ...Array.from({ length: 7 }, (_, index) => ({
+        value: String(index + 2),
+        label: t("settings.presets.quickSlotNumber", { slot: index + 2 }),
+      })),
+    ],
+    [t],
+  );
 
   const deletePreset = async () => {
     setSaving(true);
@@ -180,6 +190,25 @@ const PresetCard: React.FC<PresetCardProps> = ({ preset }) => {
             : t("settings.presets.shortcutRequired")
         }
       />
+
+      <SettingContainer
+        title={t("settings.presets.quickSlot")}
+        description={t("settings.presets.quickSlotDescription")}
+        grouped={true}
+      >
+        <Select
+          value={preset.quick_slot ? String(preset.quick_slot) : "none"}
+          options={quickSlotOptions}
+          isClearable={false}
+          disabled={saving}
+          onChange={(value) =>
+            void savePreset({
+              ...presetForSave,
+              quick_slot: value && value !== "none" ? Number(value) : null,
+            })
+          }
+        />
+      </SettingContainer>
 
       <SettingContainer
         title={t("settings.presets.model")}
@@ -326,8 +355,33 @@ export const PresetsSettings: React.FC = () => {
   const { t } = useTranslation();
   const { settings, refreshSettings } = useSettings();
   const [creating, setCreating] = useState(false);
+  const [selectingActive, setSelectingActive] = useState(false);
   const presets = settings?.transcription_presets ?? [];
   const atLimit = presets.length >= MAX_PRESETS;
+  const activePresetOptions = useMemo(
+    () => [
+      { value: "default", label: t("settings.presets.defaultPreset") },
+      ...presets.map((preset) => ({ value: preset.id, label: preset.name })),
+    ],
+    [presets, t],
+  );
+
+  const selectActivePreset = async (value: string | null) => {
+    setSelectingActive(true);
+    try {
+      const result = await commands.setActiveTranscriptionPreset(
+        !value || value === "default" ? null : value,
+      );
+      if (result.status === "error") throw new Error(result.error);
+      await refreshSettings();
+    } catch (error) {
+      toast.error(t("settings.presets.activePresetFailed"), {
+        description: String(error),
+      });
+    } finally {
+      setSelectingActive(false);
+    }
+  };
 
   const createPreset = async () => {
     setCreating(true);
@@ -372,6 +426,30 @@ export const PresetsSettings: React.FC = () => {
         </div>
       ) : (
         <>
+          <SettingsGroup title={t("settings.presets.quickSelector")}>
+            <SettingContainer
+              title={t("settings.presets.activePreset")}
+              description={t("settings.presets.activePresetDescription")}
+              grouped={true}
+              layout="stacked"
+            >
+              <Select
+                value={settings?.active_transcription_preset_id ?? "default"}
+                options={activePresetOptions}
+                isClearable={false}
+                disabled={selectingActive}
+                onChange={(value) => void selectActivePreset(value)}
+              />
+            </SettingContainer>
+            <ShortcutInput
+              shortcutId="quick_preset_selector"
+              grouped={true}
+              title={t("settings.presets.quickSelectorShortcut")}
+              description={t(
+                "settings.presets.quickSelectorShortcutDescription",
+              )}
+            />
+          </SettingsGroup>
           {presets.map((preset) => (
             <PresetCard key={preset.id} preset={preset} />
           ))}

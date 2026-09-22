@@ -34,6 +34,18 @@ pub fn handle_shortcut_event(
 ) {
     let settings = get_settings(app);
 
+    if binding_id == crate::quick_preset_selector::QUICK_SELECTOR_BINDING_ID {
+        if settings.transcription_presets.is_empty() {
+            return;
+        }
+        if is_pressed {
+            crate::quick_preset_selector::open(app);
+        } else {
+            crate::quick_preset_selector::release(app);
+        }
+        return;
+    }
+
     // A stale native registration must never bypass the global AI
     // post-processing master/privacy switch. This also protects against rare
     // teardown failures where the OS still delivers the old shortcut.

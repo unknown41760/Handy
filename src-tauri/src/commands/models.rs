@@ -84,6 +84,20 @@ fn reconcile_presets_for_deleted_model(
             }
         }
     }
+
+    // If the selected preset inherited the deleted global model, it no longer
+    // resolves to a usable operation. Reset the persisted selection as well so
+    // the settings UI, radial highlight, and effective target all agree on
+    // Default instead of displaying a broken active preset.
+    if settings
+        .active_transcription_preset_id
+        .as_deref()
+        .is_some_and(|preset_id| {
+            crate::settings::resolve_selectable_transcription_preset(settings, preset_id).is_err()
+        })
+    {
+        settings.active_transcription_preset_id = None;
+    }
     disabled
 }
 
@@ -309,6 +323,7 @@ pub async fn delete_model(
     }
 
     write_settings(&app_handle, next_settings);
+    crate::quick_preset_selector::emit_effective_transcription_target(&app_handle);
     let _ = app_handle.emit(
         "settings-changed",
         serde_json::json!({ "setting": "transcription_presets" }),
@@ -367,6 +382,7 @@ pub fn switch_active_model(app: &AppHandle, model_id: &str) -> Result<(), String
     );
 
     write_settings(app, settings);
+    crate::quick_preset_selector::emit_effective_transcription_target(app);
 
     // Skip eager loading if unload is set to "Immediately" — the model
     // will be loaded on-demand during the next transcription.
@@ -386,14 +402,22 @@ pub fn switch_active_model(app: &AppHandle, model_id: &str) -> Result<(), String
             "Model selection changed to {} (not loading — unload set to Immediately).",
             model_id
         );
+        drop(_loading_guard);
+        crate::quick_preset_selector::emit_effective_transcription_target(app);
         return Ok(());
     }
 
     // Load the model. On failure, revert the persisted selection.
     if let Err(e) = transcription_manager.load_model(model_id) {
         write_settings(app, settings_before);
+        crate::quick_preset_selector::emit_effective_transcription_target(app);
         return Err(e.to_string());
     }
+
+    drop(_loading_guard);
+    let target = crate::quick_preset_selector::effective_transcription_target(app);
+    transcription_manager.initiate_model_load_for(&target.model_id);
+    crate::quick_preset_selector::emit_effective_transcription_target(app);
 
     Ok(())
 }
@@ -460,6 +484,7 @@ mod tests {
             translate_to_english: false,
             post_process: false,
             post_process_prompt_id: None,
+            quick_slot: None,
         }
     }
 
@@ -495,6 +520,7 @@ mod tests {
             test_preset("preset_a", "preset-model"),
             test_preset("preset_b", "other-model"),
         ];
+        settings.active_transcription_preset_id = Some("preset_a".to_string());
 
         let disabled = reconcile_presets_for_deleted_model(&mut settings, "preset-model", false);
 
@@ -503,6 +529,9 @@ mod tests {
         assert!(settings.transcription_presets[0].model_id.is_empty());
         assert!(settings.transcription_presets[1].enabled);
         assert_eq!(settings.transcription_presets[1].model_id, "other-model");
+        let active = crate::settings::resolve_active_transcription_operation(settings, false);
+        assert_eq!(active.preset_id.as_deref(), Some("preset_a"));
+        assert_eq!(active.settings.selected_model, "normal-model");
     }
 
     #[test]
@@ -513,11 +542,18 @@ mod tests {
             test_preset("preset_a", ""),
             test_preset("preset_b", "other-model"),
         ];
+        settings.active_transcription_preset_id = Some("preset_a".to_string());
+        // `delete_model` clears this before reconciliation.
+        settings.selected_model.clear();
 
         let disabled = reconcile_presets_for_deleted_model(&mut settings, "normal-model", true);
 
         assert_eq!(disabled, vec!["preset_a".to_string()]);
         assert!(!settings.transcription_presets[0].enabled);
         assert!(settings.transcription_presets[1].enabled);
+        assert_eq!(settings.active_transcription_preset_id, None);
+        let active = crate::settings::resolve_active_transcription_operation(settings, false);
+        assert_eq!(active.preset_id, None);
+        assert!(active.settings.selected_model.is_empty());
     }
 }

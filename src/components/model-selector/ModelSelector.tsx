@@ -1,7 +1,7 @@
-import React, { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect, useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import { listen } from "@tauri-apps/api/event";
-import { commands } from "@/bindings";
+import { commands, type EffectiveTranscriptionTarget } from "@/bindings";
 import { getTranslatedModelName } from "../../lib/utils/modelTranslation";
 import { useModelStore } from "../../stores/modelStore";
 import ModelStatusButton from "./ModelStatusButton";
@@ -9,6 +9,7 @@ import ModelDropdown from "./ModelDropdown";
 import DownloadProgressDisplay from "./DownloadProgressDisplay";
 
 import { ModelStateEvent } from "@/lib/types/events";
+import { getEffectiveDisplayModelId } from "./effectiveModel";
 
 type ModelStatus =
   | "ready"
@@ -41,59 +42,90 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({ onError }) => {
   const [showModelDropdown, setShowModelDropdown] = useState(false);
   // Track pending model switch for optimistic display
   const [pendingModelId, setPendingModelId] = useState<string | null>(null);
+  const [effectiveTarget, setEffectiveTarget] =
+    useState<EffectiveTranscriptionTarget | null>(null);
+  const effectiveTargetRef = useRef<EffectiveTranscriptionTarget | null>(null);
 
   const dropdownRef = useRef<HTMLDivElement>(null);
 
-  const displayModelId = pendingModelId || currentModel;
+  const displayModelId = getEffectiveDisplayModelId(
+    effectiveTarget,
+    currentModel,
+  );
 
-  // Check model status when currentModel changes
-  useEffect(() => {
-    const checkStatus = async () => {
-      if (currentModel) {
-        try {
-          const statusResult = await commands.getTranscriptionModelStatus();
-          if (statusResult.status === "ok") {
-            setModelStatus(
-              statusResult.data === currentModel ? "ready" : "unloaded",
-            );
-          }
-        } catch {
-          setModelStatus("error");
-          setModelError("Failed to check model status");
-        }
-      } else {
+  const refreshEffectiveTarget = useCallback(async () => {
+    try {
+      const [target, statusResult] = await Promise.all([
+        commands.getEffectiveTranscriptionTarget(),
+        commands.getTranscriptionModelStatus(),
+      ]);
+      effectiveTargetRef.current = target;
+      setEffectiveTarget(target);
+      if (!target.model_id) {
         setModelStatus("none");
+      } else if (
+        statusResult.status === "ok" &&
+        statusResult.data === target.model_id
+      ) {
+        setModelStatus("ready");
+      } else {
+        setModelStatus("loading");
       }
-    };
-    checkStatus();
-  }, [currentModel]);
+    } catch {
+      setModelStatus("error");
+      setModelError("Failed to check model status");
+    }
+  }, []);
+
+  // The button describes the model that will process the active recording (or
+  // the next normal Transcribe), not merely the global dropdown selection.
+  useEffect(() => {
+    void refreshEffectiveTarget();
+  }, [currentModel, refreshEffectiveTarget]);
 
   useEffect(() => {
     // Listen for model loading lifecycle events
     const modelStateUnlisten = listen<ModelStateEvent>(
       "model-state-changed",
       (event) => {
-        const { event_type, error } = event.payload;
+        const { event_type, error, model_id: modelId } = event.payload;
         switch (event_type) {
           case "loading_started":
-            setModelStatus("loading");
+            if (modelId === effectiveTargetRef.current?.model_id) {
+              setModelStatus("loading");
+            }
             setModelError(null);
             break;
           case "loading_completed":
-            setModelStatus("ready");
+            void refreshEffectiveTarget();
             setModelError(null);
             setPendingModelId(null);
             break;
           case "loading_failed":
-            setModelStatus("error");
-            setModelError(error || "Failed to load model");
+            if (modelId === effectiveTargetRef.current?.model_id) {
+              setModelStatus("error");
+              setModelError(error || "Failed to load model");
+            } else {
+              void refreshEffectiveTarget();
+            }
             setPendingModelId(null);
             break;
           case "unloaded":
-            setModelStatus("unloaded");
+            void refreshEffectiveTarget();
             setModelError(null);
             break;
+          case "selection_changed":
+            void refreshEffectiveTarget();
+            break;
         }
+      },
+    );
+    const effectiveTargetUnlisten = listen<EffectiveTranscriptionTarget>(
+      "effective-transcription-target-changed",
+      (event) => {
+        effectiveTargetRef.current = event.payload;
+        setEffectiveTarget(event.payload);
+        void refreshEffectiveTarget();
       },
     );
 
@@ -136,9 +168,10 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({ onError }) => {
     return () => {
       document.removeEventListener("mousedown", handleClickOutside);
       modelStateUnlisten.then((fn) => fn());
+      effectiveTargetUnlisten.then((fn) => fn());
       downloadCompleteUnlisten.then((fn) => fn());
     };
-  }, [selectModel]);
+  }, [refreshEffectiveTarget, selectModel]);
 
   const handleModelSelect = async (modelId: string) => {
     setPendingModelId(modelId);
@@ -257,7 +290,7 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({ onError }) => {
         {showModelDropdown && (
           <ModelDropdown
             models={models}
-            currentModelId={displayModelId}
+            currentModelId={pendingModelId || currentModel}
             onModelSelect={handleModelSelect}
           />
         )}

@@ -197,6 +197,39 @@ pub struct LoadingGuard {
     loading_condvar: Arc<Condvar>,
 }
 
+#[derive(Default)]
+struct ModelPreloadState {
+    requested_model_id: Mutex<Option<String>>,
+    worker_active: AtomicBool,
+}
+
+impl ModelPreloadState {
+    /// Store the latest desired model without waiting for any load already in
+    /// progress. `true` means the caller won responsibility for starting the
+    /// single worker that drains these coalesced requests.
+    fn request(&self, model_id: &str) -> bool {
+        *self.requested_model_id.lock().unwrap() = Some(model_id.to_string());
+        self.worker_active
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+    }
+
+    fn take(&self) -> Option<String> {
+        self.requested_model_id.lock().unwrap().take()
+    }
+
+    /// Release the worker role and reacquire it if a request arrived during
+    /// handoff. A new requester may win first and start its own worker.
+    fn continue_after_empty(&self) -> bool {
+        self.worker_active.store(false, Ordering::Release);
+        self.requested_model_id.lock().unwrap().is_some()
+            && self
+                .worker_active
+                .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok()
+    }
+}
+
 impl Drop for LoadingGuard {
     fn drop(&mut self) {
         // Recover from a poisoned mutex instead of panicking —
@@ -255,6 +288,10 @@ pub struct TranscriptionManager {
     watcher_handle: Arc<Mutex<Option<thread::JoinHandle<()>>>>,
     is_loading: Arc<Mutex<bool>>,
     loading_condvar: Arc<Condvar>,
+    /// Latest non-blocking preload request. Multiple preset changes while a
+    /// model is loading coalesce so only the final requested model is loaded
+    /// next instead of replaying every intermediate selection.
+    preload_state: Arc<ModelPreloadState>,
     reload_model_on_next_use: Arc<AtomicBool>,
     /// Routes real-time audio frames to the active streaming worker; see
     /// [`StreamRouter`]. Shared with the audio recorder so per-frame feeds skip
@@ -291,6 +328,7 @@ impl TranscriptionManager {
             watcher_handle: Arc::new(Mutex::new(None)),
             is_loading: Arc::new(Mutex::new(false)),
             loading_condvar: Arc::new(Condvar::new()),
+            preload_state: Arc::new(ModelPreloadState::default()),
             reload_model_on_next_use: Arc::new(AtomicBool::new(false)),
             router: Arc::new(StreamRouter::new()),
             stream_active: Arc::new(AtomicBool::new(false)),
@@ -801,32 +839,26 @@ impl TranscriptionManager {
             return;
         }
 
-        let mut is_loading = self.is_loading.lock().unwrap();
-        if *is_loading {
+        if !self.preload_state.request(model_id) {
             return;
         }
 
-        let reload_pending = self.reload_model_on_next_use.load(Ordering::Acquire);
-        let current_model = self.get_current_model();
-        if !reload_pending && self.is_model_loaded() && current_model.as_deref() == Some(model_id) {
-            return;
-        }
-
-        *is_loading = true;
         let self_clone = self.clone();
-        let model_id = model_id.to_string();
-        thread::spawn(move || {
-            if reload_pending {
-                self_clone
-                    .reload_model_on_next_use
-                    .store(false, Ordering::Release);
+        thread::spawn(move || loop {
+            if let Some(requested_model_id) = self_clone.preload_state.take() {
+                if let Err(error) = self_clone.ensure_model_loaded_for(&requested_model_id) {
+                    error!("Failed to load model '{}': {}", requested_model_id, error);
+                }
+                continue;
             }
-            if let Err(e) = self_clone.load_model(&model_id) {
-                error!("Failed to load model '{}': {}", model_id, e);
+
+            // Close the handoff race: a request may have arrived after the
+            // empty read while it still observed this worker as active.
+            if self_clone.preload_state.continue_after_empty() {
+                continue;
+            } else {
+                break;
             }
-            let mut is_loading = self_clone.is_loading.lock().unwrap();
-            *is_loading = false;
-            self_clone.loading_condvar.notify_all();
         });
     }
 
@@ -2257,6 +2289,20 @@ mod tests {
 
     fn languages(codes: &[&str]) -> Vec<String> {
         codes.iter().map(|code| (*code).to_string()).collect()
+    }
+
+    #[test]
+    fn model_preload_requests_do_not_wait_and_coalesce_to_the_final_selection() {
+        let state = ModelPreloadState::default();
+
+        assert!(state.request("english-model"));
+        assert!(!state.request("russian-model"));
+        assert!(!state.request("formal-email-model"));
+        assert_eq!(state.take().as_deref(), Some("formal-email-model"));
+        assert!(!state.continue_after_empty());
+
+        assert!(state.request("next-recording-model"));
+        assert_eq!(state.take().as_deref(), Some("next-recording-model"));
     }
 
     #[test]

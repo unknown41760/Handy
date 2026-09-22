@@ -16,6 +16,7 @@ mod memory;
 mod overlay;
 mod paste_tx;
 pub mod portable;
+mod quick_preset_selector;
 mod secure_input;
 mod settings;
 mod shortcut;
@@ -653,6 +654,11 @@ pub fn run(cli_args: CliArgs) {
             shortcut::create_transcription_preset,
             shortcut::delete_transcription_preset,
             shortcut::update_transcription_preset,
+            quick_preset_selector::set_active_transcription_preset,
+            quick_preset_selector::get_effective_transcription_target,
+            quick_preset_selector::get_quick_preset_selector_payload,
+            quick_preset_selector::select_quick_preset_slot,
+            quick_preset_selector::close_quick_preset_selector,
             shortcut::change_shortcut_activation_setting,
             shortcut::change_hold_threshold_ms_setting,
             shortcut::change_audio_feedback_setting,
@@ -1010,6 +1016,7 @@ pub fn run(cli_args: CliArgs) {
             let app_handle = app.handle().clone();
             app.manage(TranscriptionCoordinator::new(app_handle.clone()));
             app.manage(settings::ActiveTranscriptionState::default());
+            app.manage(quick_preset_selector::QuickPresetSelectorState::default());
 
             initialize_core_logic(&app_handle);
 

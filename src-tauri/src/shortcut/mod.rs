@@ -552,15 +552,35 @@ fn create_transcription_preset_in_settings(
         translate_to_english: false,
         post_process: false,
         post_process_prompt_id: None,
+        quick_slot: None,
     };
     app_settings.transcription_presets.push(preset.clone());
     Ok(preset)
+}
+
+fn assign_unique_quick_slot(
+    presets: &mut [TranscriptionPreset],
+    preset_id: &str,
+    slot: Option<u8>,
+) -> Result<(), String> {
+    if let Some(slot) = slot {
+        if !(2..=8).contains(&slot) {
+            return Err("Quick slot must be None or a value from 2 through 8".to_string());
+        }
+        for other in presets.iter_mut() {
+            if other.id != preset_id && other.quick_slot == Some(slot) {
+                other.quick_slot = None;
+            }
+        }
+    }
+    Ok(())
 }
 
 #[tauri::command]
 #[specta::specta]
 pub fn create_transcription_preset(app: AppHandle) -> Result<TranscriptionPreset, String> {
     let mut app_settings = settings::get_settings(&app);
+    let register_quick_selector = app_settings.transcription_presets.is_empty();
     let id = format!("preset_{}", Uuid::new_v4().simple());
     let mut preset = create_transcription_preset_in_settings(&mut app_settings, id)?;
 
@@ -583,7 +603,17 @@ pub fn create_transcription_preset(app: AppHandle) -> Result<TranscriptionPreset
         }
     }
 
+    if register_quick_selector {
+        let binding = app_settings
+            .bindings
+            .get(crate::quick_preset_selector::QUICK_SELECTOR_BINDING_ID)
+            .cloned()
+            .ok_or_else(|| "Quick preset selector binding is missing".to_string())?;
+        register_shortcut(&app, binding)?;
+    }
+
     settings::write_settings(&app, app_settings);
+    crate::secure_input::reconcile_fallback(&app);
 
     let _ = app.emit(
         "settings-changed",
@@ -606,9 +636,11 @@ pub fn delete_transcription_preset(app: AppHandle, id: String) -> Result<(), Str
         .iter()
         .position(|preset| preset.id == id)
         .ok_or_else(|| format!("Transcription preset '{}' not found", id))?;
+    let unregister_quick_selector = app_settings.transcription_presets.len() == 1;
     let suspended_fallback = crate::secure_input::suspend_binding_fallback(&app, &id)?;
+    let preset_binding = app_settings.bindings.get(&id).cloned();
 
-    if let Some(binding) = app_settings.bindings.get(&id).cloned() {
+    if let Some(binding) = preset_binding.clone() {
         if let Err(error) = unregister_shortcut(&app, binding) {
             let mut message = format!("Failed to unregister preset shortcut '{}': {}", id, error);
             if let Err(restore_error) =
@@ -623,10 +655,62 @@ pub fn delete_transcription_preset(app: AppHandle, id: String) -> Result<(), Str
         }
     }
 
+    if unregister_quick_selector {
+        if let Some(binding) = app_settings
+            .bindings
+            .get(crate::quick_preset_selector::QUICK_SELECTOR_BINDING_ID)
+            .cloned()
+        {
+            if let Err(error) = unregister_shortcut(&app, binding) {
+                let mut message = format!(
+                    "Failed to unregister quick preset selector shortcut: {}",
+                    error
+                );
+                if let Some(binding) = preset_binding {
+                    if let Err(restore_error) = register_shortcut(&app, binding) {
+                        message.push_str(&format!(
+                            "; preset shortcut rollback incomplete: {}",
+                            restore_error
+                        ));
+                    }
+                }
+                if let Err(restore_error) = crate::secure_input::restore_suspended_binding_fallback(
+                    &app,
+                    &suspended_fallback,
+                ) {
+                    message.push_str(&format!(
+                        "; Secure Input fallback rollback incomplete: {}",
+                        restore_error
+                    ));
+                }
+                return Err(message);
+            }
+        }
+    }
+
     app_settings.transcription_presets.remove(index);
+    let deleted_active_preset =
+        app_settings.active_transcription_preset_id.as_deref() == Some(id.as_str());
+    if deleted_active_preset {
+        app_settings.active_transcription_preset_id = None;
+    }
     app_settings.bindings.remove(&id);
     settings::write_settings(&app, app_settings);
     crate::secure_input::reconcile_fallback(&app);
+    if unregister_quick_selector {
+        crate::quick_preset_selector::destroy(&app);
+    }
+    crate::quick_preset_selector::emit_effective_transcription_target(&app);
+    if deleted_active_preset {
+        let target = crate::quick_preset_selector::effective_transcription_target(&app);
+        if !target.model_id.trim().is_empty()
+            && settings::get_settings(&app).model_unload_timeout
+                != settings::ModelUnloadTimeout::Immediately
+        {
+            app.state::<std::sync::Arc<crate::managers::transcription::TranscriptionManager>>()
+                .initiate_model_load_for(&target.model_id);
+        }
+    }
 
     let _ = app.emit(
         "settings-changed",
@@ -700,6 +784,11 @@ pub fn update_transcription_preset(
         .iter()
         .position(|existing| existing.id == preset.id)
         .ok_or_else(|| format!("Preset slot '{}' is missing from settings", preset.id))?;
+    assign_unique_quick_slot(
+        &mut app_settings.transcription_presets,
+        &preset.id,
+        preset.quick_slot,
+    )?;
     let was_enabled = app_settings.transcription_presets[index].enabled;
     let was_post_process = app_settings.transcription_presets[index].post_process;
 
@@ -771,6 +860,16 @@ pub fn update_transcription_preset(
     }
     settings::write_settings(&app, app_settings);
     crate::secure_input::reconcile_fallback(&app);
+    let target = crate::quick_preset_selector::effective_transcription_target(&app);
+    crate::quick_preset_selector::emit_effective_transcription_target(&app);
+    if !target.recording
+        && !target.model_id.trim().is_empty()
+        && settings::get_settings(&app).model_unload_timeout
+            != settings::ModelUnloadTimeout::Immediately
+    {
+        app.state::<std::sync::Arc<crate::managers::transcription::TranscriptionManager>>()
+            .initiate_model_load_for(&target.model_id);
+    }
 
     let _ = app.emit(
         "settings-changed",
@@ -2137,9 +2236,10 @@ mod tests {
 #[cfg(test)]
 mod preset_tests {
     use super::{
-        create_transcription_preset_in_settings, prepare_settings_for_implementation,
-        reconcile_presets_for_active_post_process_model, reconcile_presets_for_deleted_prompt,
-        validate_binding_conflict, validate_enabled_preset_shortcuts_for_implementation,
+        assign_unique_quick_slot, create_transcription_preset_in_settings,
+        prepare_settings_for_implementation, reconcile_presets_for_active_post_process_model,
+        reconcile_presets_for_deleted_prompt, validate_binding_conflict,
+        validate_enabled_preset_shortcuts_for_implementation,
     };
     use crate::settings::{
         self, get_default_settings, normalize_preset_language_for_model, KeyboardImplementation,
@@ -2156,6 +2256,7 @@ mod preset_tests {
             translate_to_english: false,
             post_process: false,
             post_process_prompt_id: None,
+            quick_slot: None,
         }
     }
 
@@ -2318,6 +2419,21 @@ mod preset_tests {
 
         assert_eq!(created.name, "Preset 1");
         assert_eq!(app_settings.transcription_presets[0].name, "Preset 2");
+    }
+
+    #[test]
+    fn assigning_quick_slot_moves_it_from_the_previous_preset() {
+        let mut first = test_preset("preset_first");
+        first.quick_slot = Some(2);
+        let second = test_preset("preset_second");
+        let mut presets = vec![first, second];
+
+        assign_unique_quick_slot(&mut presets, "preset_second", Some(2)).unwrap();
+        presets[1].quick_slot = Some(2);
+
+        assert_eq!(presets[0].quick_slot, None);
+        assert_eq!(presets[1].quick_slot, Some(2));
+        assert!(assign_unique_quick_slot(&mut presets, "preset_second", Some(1)).is_err());
     }
 
     #[test]
