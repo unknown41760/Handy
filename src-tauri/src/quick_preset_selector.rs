@@ -4,7 +4,7 @@ use crate::settings::{
     self, active_transcription_operation, replace_active_transcription_operation,
     resolve_active_transcription_operation, resolve_selectable_transcription_preset,
 };
-use handy_keys::KeyboardListener;
+use handy_keys::{Key, KeyboardListener};
 use serde::Serialize;
 use specta::Type;
 use std::f64::consts::TAU;
@@ -16,7 +16,7 @@ use tauri::{AppHandle, Emitter, Manager, Position, WebviewUrl, WebviewWindowBuil
 pub const QUICK_SELECTOR_BINDING_ID: &str = "quick_preset_selector";
 const WINDOW_LABEL: &str = "quick_preset_selector";
 const WINDOW_SIZE: f64 = 420.0;
-const SELECTION_DEAD_ZONE: f64 = 42.0;
+const SELECTION_DEAD_ZONE: f64 = 58.0;
 
 #[derive(Clone, Debug, Serialize, Type)]
 pub struct EffectiveTranscriptionTarget {
@@ -52,6 +52,8 @@ struct SelectorSession {
     center_x: i32,
     center_y: i32,
     generation: u64,
+    keyboard_x: i8,
+    keyboard_y: i8,
 }
 
 #[derive(Default)]
@@ -206,6 +208,33 @@ fn slot_for_cursor(session: SelectorSession, cursor: (i32, i32)) -> Option<u8> {
     Some(((angle / (TAU / 8.0)).round() as u8 % 8) + 1)
 }
 
+fn slot_for_keyboard_position(x: i8, y: i8) -> Option<u8> {
+    match (x, y) {
+        (0, -1) => Some(1),
+        (1, -1) => Some(2),
+        (1, 0) => Some(3),
+        (1, 1) => Some(4),
+        (0, 1) => Some(5),
+        (-1, 1) => Some(6),
+        (-1, 0) => Some(7),
+        (-1, -1) => Some(8),
+        _ => None,
+    }
+}
+
+fn move_keyboard_position(session: &mut SelectorSession, key: Key) -> Option<Option<u8>> {
+    let previous = (session.keyboard_x, session.keyboard_y);
+    match key {
+        Key::UpArrow => session.keyboard_y = (session.keyboard_y - 1).max(-1),
+        Key::DownArrow => session.keyboard_y = (session.keyboard_y + 1).min(1),
+        Key::LeftArrow => session.keyboard_x = (session.keyboard_x - 1).max(-1),
+        Key::RightArrow => session.keyboard_x = (session.keyboard_x + 1).min(1),
+        _ => return None,
+    }
+    let position = (session.keyboard_x, session.keyboard_y);
+    (position != previous).then(|| slot_for_keyboard_position(position.0, position.1))
+}
+
 fn preset_id_for_slot(settings: &settings::AppSettings, slot: u8) -> Option<Option<String>> {
     if slot == 1 {
         return Some(None);
@@ -270,6 +299,30 @@ fn get_or_create_window(app: &AppHandle) -> Result<tauri::WebviewWindow, String>
         .map_err(|error| format!("Failed to create quick preset selector: {error}"))
 }
 
+/// Reasserts the selector's native Windows Z-order without activating it.
+/// Tauri's always-on-top flag can be displaced when another topmost window is
+/// shown after this reusable window was created.
+#[cfg(target_os = "windows")]
+fn force_selector_topmost(window: &tauri::WebviewWindow) {
+    use windows::Win32::UI::WindowsAndMessaging::{
+        SetWindowPos, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_SHOWWINDOW,
+    };
+
+    if let Ok(hwnd) = window.hwnd() {
+        unsafe {
+            let _ = SetWindowPos(
+                hwnd,
+                Some(HWND_TOPMOST),
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW,
+            );
+        }
+    }
+}
+
 fn stop_keyboard_selection(state: &QuickPresetSelectorState) {
     state.keyboard_running.store(false, Ordering::SeqCst);
     *state
@@ -286,7 +339,7 @@ fn start_keyboard_selection(app: &AppHandle) {
     let listener = match KeyboardListener::new() {
         Ok(listener) => listener,
         Err(error) => {
-            log::warn!("Quick preset number-key selection is unavailable: {error}");
+            log::warn!("Quick preset keyboard selection is unavailable: {error}");
             return;
         }
     };
@@ -311,11 +364,15 @@ fn start_keyboard_selection(app: &AppHandle) {
                 });
             if let Some(event) = event {
                 if event.is_key_down {
-                    let slot = event
-                        .key
-                        .and_then(|key| key.to_string().parse::<u8>().ok())
+                    let Some(key) = event.key else {
+                        continue;
+                    };
+                    let number_slot = key
+                        .to_string()
+                        .parse::<u8>()
+                        .ok()
                         .filter(|slot| (1..=8).contains(slot));
-                    if let Some(slot) = slot {
+                    if let Some(slot) = number_slot {
                         let session =
                             handle
                                 .try_state::<QuickPresetSelectorState>()
@@ -335,6 +392,55 @@ fn start_keyboard_selection(app: &AppHandle) {
                                 hide_now(&handle);
                             }
                             break;
+                        }
+                    } else if key == Key::Return {
+                        let session =
+                            handle
+                                .try_state::<QuickPresetSelectorState>()
+                                .and_then(|state| {
+                                    let mut session = state
+                                        .session
+                                        .lock()
+                                        .unwrap_or_else(|poisoned| poisoned.into_inner());
+                                    let slot = slot_for_keyboard_position(
+                                        session.as_ref()?.keyboard_x,
+                                        session.as_ref()?.keyboard_y,
+                                    )?;
+                                    session.take().map(|session| (slot, session.generation))
+                                });
+                        if let Some((slot, generation)) = session {
+                            running.store(false, Ordering::SeqCst);
+                            if let Err(error) = confirm_slot(&handle, slot, generation) {
+                                log::error!(
+                                    "Failed to select quick preset slot {slot} from keyboard: {error}"
+                                );
+                                hide_now(&handle);
+                            }
+                            break;
+                        }
+                    } else if key == Key::Escape {
+                        running.store(false, Ordering::SeqCst);
+                        if let Some(state) = handle.try_state::<QuickPresetSelectorState>() {
+                            state.generation.fetch_add(1, Ordering::SeqCst);
+                            *state
+                                .session
+                                .lock()
+                                .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
+                        }
+                        hide_now(&handle);
+                        break;
+                    } else {
+                        let highlighted_slot = handle
+                            .try_state::<QuickPresetSelectorState>()
+                            .and_then(|state| {
+                                let mut session = state
+                                    .session
+                                    .lock()
+                                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                                move_keyboard_position(session.as_mut()?, key)
+                            });
+                        if let Some(slot) = highlighted_slot {
+                            let _ = handle.emit_to(WINDOW_LABEL, "quick-preset-highlighted", slot);
                         }
                     }
                 }
@@ -367,6 +473,8 @@ pub fn open(app: &AppHandle) {
         center_x: cursor.0,
         center_y: cursor.1,
         generation,
+        keyboard_x: 0,
+        keyboard_y: 0,
     });
 
     let handle = app.clone();
@@ -375,7 +483,10 @@ pub fn open(app: &AppHandle) {
         Ok(window) => {
             position_selector(&window, cursor);
             let _ = window.emit("show-quick-preset-selector", payload);
+            let _ = window.set_always_on_top(true);
             let _ = window.show();
+            #[cfg(target_os = "windows")]
+            force_selector_topmost(&window);
         }
         Err(error) => log::error!("{error}"),
     });
@@ -429,7 +540,10 @@ pub fn release(app: &AppHandle) {
     let Some(session) = session else {
         return;
     };
-    let slot = input::get_cursor_position(app).and_then(|cursor| slot_for_cursor(session, cursor));
+    let keyboard_slot = slot_for_keyboard_position(session.keyboard_x, session.keyboard_y);
+    let slot = keyboard_slot.or_else(|| {
+        input::get_cursor_position(app).and_then(|cursor| slot_for_cursor(session, cursor))
+    });
     match slot {
         Some(slot) => {
             if let Err(error) = confirm_slot(app, slot, session.generation) {
@@ -501,8 +615,22 @@ pub fn destroy(app: &AppHandle) {
 
 #[cfg(test)]
 mod tests {
-    use super::{preset_id_for_slot, selector_payload, slot_for_cursor, SelectorSession};
+    use super::{
+        move_keyboard_position, preset_id_for_slot, selector_payload, slot_for_cursor,
+        slot_for_keyboard_position, SelectorSession,
+    };
     use crate::settings::{get_default_settings, TranscriptionPreset};
+    use handy_keys::Key;
+
+    fn session() -> SelectorSession {
+        SelectorSession {
+            center_x: 100,
+            center_y: 100,
+            generation: 1,
+            keyboard_x: 0,
+            keyboard_y: 0,
+        }
+    }
 
     fn preset(id: &str, slot: Option<u8>) -> TranscriptionPreset {
         TranscriptionPreset {
@@ -520,16 +648,76 @@ mod tests {
 
     #[test]
     fn cursor_directions_map_to_fixed_clockwise_slots() {
-        let session = SelectorSession {
-            center_x: 100,
-            center_y: 100,
-            generation: 1,
-        };
+        let session = session();
         assert_eq!(slot_for_cursor(session, (100, 0)), Some(1));
         assert_eq!(slot_for_cursor(session, (200, 100)), Some(3));
         assert_eq!(slot_for_cursor(session, (100, 200)), Some(5));
         assert_eq!(slot_for_cursor(session, (0, 100)), Some(7));
         assert_eq!(slot_for_cursor(session, (110, 110)), None);
+        assert_eq!(slot_for_cursor(session, (100, 45)), None);
+        assert_eq!(slot_for_cursor(session, (100, 40)), Some(1));
+    }
+
+    #[test]
+    fn keyboard_navigation_starts_in_center_and_reaches_all_directions() {
+        let mut session = session();
+        assert_eq!(
+            slot_for_keyboard_position(session.keyboard_x, session.keyboard_y),
+            None
+        );
+        assert_eq!(
+            move_keyboard_position(&mut session, Key::UpArrow),
+            Some(Some(1))
+        );
+        assert_eq!(
+            move_keyboard_position(&mut session, Key::RightArrow),
+            Some(Some(2))
+        );
+        assert_eq!(
+            move_keyboard_position(&mut session, Key::DownArrow),
+            Some(Some(3))
+        );
+        assert_eq!(
+            move_keyboard_position(&mut session, Key::DownArrow),
+            Some(Some(4))
+        );
+        assert_eq!(
+            move_keyboard_position(&mut session, Key::LeftArrow),
+            Some(Some(5))
+        );
+        assert_eq!(
+            move_keyboard_position(&mut session, Key::LeftArrow),
+            Some(Some(6))
+        );
+        assert_eq!(
+            move_keyboard_position(&mut session, Key::UpArrow),
+            Some(Some(7))
+        );
+        assert_eq!(
+            move_keyboard_position(&mut session, Key::UpArrow),
+            Some(Some(8))
+        );
+        assert_eq!(
+            move_keyboard_position(&mut session, Key::RightArrow),
+            Some(Some(1))
+        );
+    }
+
+    #[test]
+    fn opposite_arrow_returns_keyboard_navigation_to_center() {
+        let mut session = session();
+        assert_eq!(
+            move_keyboard_position(&mut session, Key::UpArrow),
+            Some(Some(1))
+        );
+        assert_eq!(
+            move_keyboard_position(&mut session, Key::DownArrow),
+            Some(None)
+        );
+        assert_eq!(
+            slot_for_keyboard_position(session.keyboard_x, session.keyboard_y),
+            None
+        );
     }
 
     #[test]

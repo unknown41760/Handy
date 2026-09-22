@@ -404,6 +404,8 @@ export const useSettingsStore = create<SettingsStore>()(
         await refreshSettings();
       } catch (error) {
         console.error(`Failed to reset binding ${id}:`, error);
+        toast.error(String(error));
+        await refreshSettings().catch(console.error);
       } finally {
         setUpdating(updateKey, false);
       }

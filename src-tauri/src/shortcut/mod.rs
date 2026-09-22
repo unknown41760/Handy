@@ -209,8 +209,9 @@ pub fn change_binding(
     }
 
     // Get the binding to modify. A dynamic preset intentionally has no
-    // binding until the user records one; that first chosen shortcut becomes
-    // both its current binding and its reset/default value.
+    // binding until the user records one. The first chosen shortcut is stored
+    // in both fields for schema compatibility; resetting a dynamic preset
+    // removes its optional binding entirely instead of restoring that value.
     let binding_to_modify = match settings.bindings.get(&id) {
         Some(binding) => binding.clone(),
         None => {
@@ -384,6 +385,64 @@ fn restore_registration(app: &AppHandle, binding: &ShortcutBinding) -> Result<()
     })
 }
 
+fn remove_preset_binding_from_settings(
+    app_settings: &mut settings::AppSettings,
+    id: &str,
+) -> Result<(), String> {
+    let preset = app_settings
+        .transcription_presets
+        .iter_mut()
+        .find(|preset| preset.id == id)
+        .ok_or_else(|| format!("Transcription preset '{}' not found", id))?;
+    preset.enabled = false;
+    app_settings.bindings.remove(id);
+    Ok(())
+}
+
+fn clear_transcription_preset_binding(
+    app: AppHandle,
+    id: String,
+) -> Result<BindingResponse, String> {
+    ensure_preset_is_not_recording(&app, &id, "reset the shortcut for")?;
+    let mut app_settings = settings::get_settings(&app);
+    let binding = settings::get_stored_binding(&app_settings, &id)?;
+    let was_enabled = settings::is_transcription_preset_enabled(&app_settings, &id);
+    let suspended_fallback = crate::secure_input::suspend_binding_fallback(&app, &id)?;
+
+    if was_enabled {
+        if let Err(error) = unregister_shortcut(&app, binding.clone()) {
+            let mut message = format!("Failed to unregister preset shortcut '{}': {}", id, error);
+            if let Err(restore_error) =
+                crate::secure_input::restore_suspended_binding_fallback(&app, &suspended_fallback)
+            {
+                message.push_str(&format!(
+                    "; Secure Input fallback rollback incomplete: {}",
+                    restore_error
+                ));
+            }
+            return Err(message);
+        }
+    }
+
+    remove_preset_binding_from_settings(&mut app_settings, &id)?;
+    settings::write_settings(&app, app_settings);
+    crate::secure_input::reconcile_fallback(&app);
+
+    let _ = app.emit(
+        "settings-changed",
+        serde_json::json!({
+            "setting": "transcription_presets",
+            "shortcut_cleared_id": id
+        }),
+    );
+
+    Ok(BindingResponse {
+        success: true,
+        binding: None,
+        error: None,
+    })
+}
+
 #[tauri::command]
 #[specta::specta]
 pub fn reset_binding(app: AppHandle, id: String) -> Result<BindingResponse, String> {
@@ -394,6 +453,9 @@ pub fn reset_binding(app: AppHandle, id: String) -> Result<BindingResponse, Stri
             binding: None,
             error: Some(format!("Binding with id '{}' is not authorized", id)),
         });
+    }
+    if settings::has_transcription_preset(&current_settings, &id) {
+        return clear_transcription_preset_binding(app, id);
     }
     let binding = settings::get_stored_binding(&current_settings, &id)?;
     change_binding(app, id, binding.default_binding)
@@ -2238,8 +2300,8 @@ mod preset_tests {
     use super::{
         assign_unique_quick_slot, create_transcription_preset_in_settings,
         prepare_settings_for_implementation, reconcile_presets_for_active_post_process_model,
-        reconcile_presets_for_deleted_prompt, validate_binding_conflict,
-        validate_enabled_preset_shortcuts_for_implementation,
+        reconcile_presets_for_deleted_prompt, remove_preset_binding_from_settings,
+        validate_binding_conflict, validate_enabled_preset_shortcuts_for_implementation,
     };
     use crate::settings::{
         self, get_default_settings, normalize_preset_language_for_model, KeyboardImplementation,
@@ -2434,6 +2496,33 @@ mod preset_tests {
         assert_eq!(presets[0].quick_slot, None);
         assert_eq!(presets[1].quick_slot, Some(2));
         assert!(assign_unique_quick_slot(&mut presets, "preset_second", Some(1)).is_err());
+    }
+
+    #[test]
+    fn resetting_a_dynamic_preset_shortcut_removes_it_and_disables_registration() {
+        let mut app_settings = get_default_settings();
+        let mut preset = test_preset("preset_reset");
+        preset.enabled = true;
+        app_settings.transcription_presets.push(preset);
+        app_settings.bindings.insert(
+            "preset_reset".to_string(),
+            settings::ShortcutBinding {
+                id: "preset_reset".to_string(),
+                name: "Preset Shortcut".to_string(),
+                description: "Preset Shortcut".to_string(),
+                default_binding: "ctrl+shift+1".to_string(),
+                current_binding: "ctrl+shift+2".to_string(),
+            },
+        );
+
+        remove_preset_binding_from_settings(&mut app_settings, "preset_reset").unwrap();
+
+        assert!(!app_settings.transcription_presets[0].enabled);
+        assert!(!app_settings.bindings.contains_key("preset_reset"));
+        assert!(!settings::is_optional_shortcut_enabled(
+            &app_settings,
+            "preset_reset"
+        ));
     }
 
     #[test]
