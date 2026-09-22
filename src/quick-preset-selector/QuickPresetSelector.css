@@ -28,8 +28,8 @@
 
 .quick-selector {
   position: relative;
-  width: 210px;
-  height: 210px;
+  width: 315px;
+  height: 315px;
   overflow: hidden;
   user-select: none;
 }
@@ -57,13 +57,13 @@
 }
 
 .quick-petal-motion {
-  transform-origin: 105px 105px;
+  transform-origin: 157.5px 157.5px;
 }
 
 .quick-petal-surface {
   fill: var(--selector-surface);
   stroke: var(--selector-border);
-  stroke-width: 0.8;
+  stroke-width: 1.2;
   stroke-linejoin: round;
   transition:
     fill 130ms ease-out,
@@ -88,9 +88,9 @@
 }
 
 .quick-slot-number {
-  margin-bottom: 1px;
+  margin-bottom: 1.5px;
   color: var(--selector-muted);
-  font-size: 6px;
+  font-size: 9px;
   font-weight: 650;
   line-height: 1;
   transition: color 130ms ease-out;
@@ -99,8 +99,8 @@
 .quick-slot-name {
   display: -webkit-box;
   overflow: hidden;
-  max-width: 52px;
-  font-size: 8px;
+  max-width: 78px;
+  font-size: 12px;
   font-weight: 600;
   line-height: 1.08;
   overflow-wrap: anywhere;
@@ -149,7 +149,7 @@
 .quick-selector-center-surface {
   fill: transparent;
   stroke: var(--selector-border);
-  stroke-width: 0.8;
+  stroke-width: 1.2;
   transition: stroke 130ms ease-out;
 }
 
@@ -165,7 +165,7 @@
 .quick-confirmation-mark > path {
   fill: none;
   stroke: var(--color-logo-primary);
-  stroke-width: 2.2;
+  stroke-width: 3.3;
   stroke-linecap: round;
   stroke-linejoin: round;
 }

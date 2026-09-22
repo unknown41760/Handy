@@ -15,8 +15,8 @@ use tauri::{AppHandle, Emitter, Manager, Position, WebviewUrl, WebviewWindowBuil
 
 pub const QUICK_SELECTOR_BINDING_ID: &str = "quick_preset_selector";
 const WINDOW_LABEL: &str = "quick_preset_selector";
-const WINDOW_SIZE: f64 = 210.0;
-const SELECTION_DEAD_ZONE: f64 = 22.0;
+const WINDOW_SIZE: f64 = 315.0;
+const SELECTION_DEAD_ZONE: f64 = 33.0;
 
 #[derive(Clone, Debug, Serialize, Type)]
 pub struct EffectiveTranscriptionTarget {
@@ -654,8 +654,8 @@ mod tests {
         assert_eq!(slot_for_cursor(session, (100, 200)), Some(5));
         assert_eq!(slot_for_cursor(session, (0, 100)), Some(7));
         assert_eq!(slot_for_cursor(session, (110, 110)), None);
-        assert_eq!(slot_for_cursor(session, (100, 79)), None);
-        assert_eq!(slot_for_cursor(session, (100, 77)), Some(1));
+        assert_eq!(slot_for_cursor(session, (100, 68)), None);
+        assert_eq!(slot_for_cursor(session, (100, 66)), Some(1));
     }
 
     #[test]

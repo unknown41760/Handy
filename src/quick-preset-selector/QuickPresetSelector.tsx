@@ -13,11 +13,11 @@ import {
 } from "@/bindings";
 import { useTranslation } from "react-i18next";
 
-const CENTER = 105;
-const INNER_RADIUS = 25;
-const OUTER_RADIUS = 96;
-const LABEL_RADIUS = 62;
-const DEAD_ZONE = 22;
+const CENTER = 157.5;
+const INNER_RADIUS = 37.5;
+const OUTER_RADIUS = 144;
+const LABEL_RADIUS = 93;
+const DEAD_ZONE = 33;
 const SLOT_ANGLE = Math.PI / 4;
 const HALF_PETAL_ANGLE = SLOT_ANGLE / 2 - 0.035;
 
@@ -36,7 +36,7 @@ const petalPath = (slot: number): string => {
   const rightAngle = centerAngle + HALF_PETAL_ANGLE;
   const outerRoundAngle = 0.06;
   const innerRoundAngle = 0.09;
-  const cornerDepth = 6;
+  const cornerDepth = 9;
 
   const outerStart = polarPoint(OUTER_RADIUS, leftAngle + outerRoundAngle);
   const outerEnd = polarPoint(OUTER_RADIUS, rightAngle - outerRoundAngle);
@@ -179,7 +179,7 @@ export default function QuickPresetSelector() {
     >
       <svg
         className="quick-selector-flower"
-        viewBox="0 0 210 210"
+        viewBox="0 0 315 315"
         role="group"
         aria-label={t("settings.presets.quickSelector")}
       >
@@ -189,7 +189,7 @@ export default function QuickPresetSelector() {
           const populated = slot.slot === 1 || Boolean(slot.preset_id);
           const highlighted = highlightedSlot === slot.slot;
           const label = slotLabel(slot, defaultLabel, emptyLabel);
-          const pushDistance = highlighted && populated ? 1.5 : 0;
+          const pushDistance = highlighted && populated ? 2.25 : 0;
           const style = {
             "--push-x": `${Math.sin(angle) * pushDistance}px`,
             "--push-y": `${-Math.cos(angle) * pushDistance}px`,
@@ -219,10 +219,10 @@ export default function QuickPresetSelector() {
                 />
                 <foreignObject
                   className="quick-petal-copy"
-                  x={labelPosition.x - 28}
-                  y={labelPosition.y - 17}
-                  width="56"
-                  height="34"
+                  x={labelPosition.x - 42}
+                  y={labelPosition.y - 25.5}
+                  width="84"
+                  height="51"
                   aria-hidden="true"
                 >
                   <div className="quick-petal-label">
@@ -240,11 +240,11 @@ export default function QuickPresetSelector() {
             className="quick-selector-center-surface"
             cx={CENTER}
             cy={CENTER}
-            r="16"
+            r="24"
           />
           {confirmation && (
             <g className="quick-confirmation-mark">
-              <path d="M97.5 105 102.5 110 113 99.5" />
+              <path d="M146.25 157.5 153.75 165 169.5 149.25" />
             </g>
           )}
         </g>
