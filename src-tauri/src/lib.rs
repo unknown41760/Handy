@@ -657,6 +657,7 @@ pub fn run(cli_args: CliArgs) {
             quick_preset_selector::set_active_transcription_preset,
             quick_preset_selector::get_effective_transcription_target,
             quick_preset_selector::get_quick_preset_selector_payload,
+            quick_preset_selector::change_quick_selector_position_setting,
             quick_preset_selector::select_quick_preset_slot,
             quick_preset_selector::close_quick_preset_selector,
             shortcut::change_shortcut_activation_setting,

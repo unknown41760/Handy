@@ -87,6 +87,7 @@ export default function QuickPresetSelector() {
   const [highlightedSlot, setHighlightedSlot] = useState<number | null>(null);
   const [confirmation, setConfirmation] =
     useState<ActivePresetSelection | null>(null);
+  const [keyboardMode, setKeyboardMode] = useState(false);
   const [appearanceKey, setAppearanceKey] = useState(0);
 
   useEffect(() => {
@@ -100,6 +101,7 @@ export default function QuickPresetSelector() {
         setPayload(event.payload);
         setHighlightedSlot(null);
         setConfirmation(null);
+        setKeyboardMode(false);
         setAppearanceKey((current) => current + 1);
       },
     );
@@ -128,10 +130,14 @@ export default function QuickPresetSelector() {
       "quick-preset-highlighted",
       (event) => setHighlightedSlot(event.payload),
     );
+    const keyboard = listen("quick-preset-keyboard-mode", () =>
+      setKeyboardMode(true),
+    );
     return () => {
       show.then((unlisten) => unlisten());
       confirmed.then((unlisten) => unlisten());
       highlighted.then((unlisten) => unlisten());
+      keyboard.then((unlisten) => unlisten());
     };
   }, []);
 
@@ -172,10 +178,13 @@ export default function QuickPresetSelector() {
     <main
       key={appearanceKey}
       className={`quick-selector ${confirmation ? "is-confirming" : ""}`}
-      onMouseMove={(event) =>
-        setHighlightedSlot(slotFromPoint(event.clientX, event.clientY))
-      }
-      onMouseLeave={() => setHighlightedSlot(null)}
+      onMouseMove={(event) => {
+        if (!keyboardMode && !confirmation)
+          setHighlightedSlot(slotFromPoint(event.clientX, event.clientY));
+      }}
+      onMouseLeave={() => {
+        if (!keyboardMode && !confirmation) setHighlightedSlot(null);
+      }}
     >
       <svg
         className="quick-selector-flower"
@@ -188,6 +197,13 @@ export default function QuickPresetSelector() {
           const labelPosition = polarPoint(LABEL_RADIUS, angle);
           const populated = slot.slot === 1 || Boolean(slot.preset_id);
           const highlighted = highlightedSlot === slot.slot;
+          const confirmed = Boolean(
+            confirmation &&
+              (slot.slot === 1
+                ? confirmation.preset_id === null
+                : Boolean(slot.preset_id) &&
+                  confirmation.preset_id === slot.preset_id),
+          );
           const label = slotLabel(slot, defaultLabel, emptyLabel);
           const pushDistance = highlighted && populated ? 2.25 : 0;
           const style = {
@@ -201,7 +217,7 @@ export default function QuickPresetSelector() {
               key={slot.slot}
               className={`quick-petal ${slot.active ? "active" : ""} ${
                 highlighted ? "highlighted" : ""
-              } ${populated ? "populated" : "empty"}`}
+              } ${confirmed ? "confirmed" : ""} ${populated ? "populated" : "empty"}`}
               style={style}
               role="button"
               aria-label={`${slot.slot}. ${label}`}
@@ -242,11 +258,6 @@ export default function QuickPresetSelector() {
             cy={CENTER}
             r="24"
           />
-          {confirmation && (
-            <g className="quick-confirmation-mark">
-              <path d="M146.25 157.5 153.75 165 169.5 149.25" />
-            </g>
-          )}
         </g>
       </svg>
     </main>

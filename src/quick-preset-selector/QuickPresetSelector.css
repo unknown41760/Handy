@@ -9,16 +9,8 @@
     var(--color-background) 98%,
     transparent
   );
-  --selector-border: color-mix(
-    in srgb,
-    var(--color-text) 14%,
-    transparent
-  );
-  --selector-muted: color-mix(
-    in srgb,
-    var(--color-text) 52%,
-    transparent
-  );
+  --selector-border: color-mix(in srgb, var(--color-text) 14%, transparent);
+  --selector-muted: color-mix(in srgb, var(--color-text) 52%, transparent);
   --selector-accent-soft: color-mix(
     in srgb,
     var(--color-logo-primary) 20%,
@@ -68,7 +60,8 @@
   transition:
     fill 130ms ease-out,
     stroke 130ms ease-out,
-    opacity 130ms ease-out;
+    opacity 130ms ease-out,
+    filter 250ms ease-out;
 }
 
 .quick-petal-copy {
@@ -146,28 +139,26 @@
   opacity: 0.72;
 }
 
+.quick-petal.confirmed.populated .quick-petal-surface {
+  fill: color-mix(
+    in srgb,
+    var(--color-logo-primary) 38%,
+    var(--color-background-ui)
+  );
+  stroke: var(--color-logo-primary);
+  animation: petal-confirm 420ms ease-out forwards;
+}
+
+.quick-petal.confirmed.populated .quick-petal-label,
+.quick-petal.confirmed.populated .quick-slot-number {
+  color: var(--color-text-stroke);
+}
+
 .quick-selector-center-surface {
   fill: transparent;
   stroke: var(--selector-border);
   stroke-width: 1.2;
   transition: stroke 130ms ease-out;
-}
-
-.is-confirming .quick-selector-center-surface {
-  stroke: var(--color-logo-primary);
-}
-
-.quick-confirmation-mark {
-  opacity: 0;
-  animation: confirmation-appear 100ms ease-out forwards;
-}
-
-.quick-confirmation-mark > path {
-  fill: none;
-  stroke: var(--color-logo-primary);
-  stroke-width: 3.3;
-  stroke-linecap: round;
-  stroke-linejoin: round;
 }
 
 .is-confirming .quick-selector-flower {
@@ -180,15 +171,21 @@
   }
 }
 
-@keyframes confirmation-appear {
-  to {
-    opacity: 1;
+@keyframes petal-confirm {
+  0% {
+    filter: brightness(1) saturate(1);
+  }
+  55% {
+    filter: brightness(1.23) saturate(1.32);
+  }
+  100% {
+    filter: brightness(1.12) saturate(1.18);
   }
 }
 
 @keyframes selector-confirm {
   0%,
-  45% {
+  65% {
     opacity: 1;
   }
 
@@ -199,7 +196,7 @@
 
 @media (prefers-reduced-motion: reduce) {
   .quick-selector-flower,
-  .quick-confirmation-mark {
+  .quick-petal.confirmed.populated .quick-petal-surface {
     animation-duration: 1ms;
   }
 

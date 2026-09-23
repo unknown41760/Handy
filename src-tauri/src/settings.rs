@@ -265,6 +265,15 @@ pub enum OverlayPosition {
     Bottom,
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum QuickSelectorPosition {
+    Mouse,
+    Bottom,
+    #[default]
+    Auto,
+}
+
 /// Which recording overlay to display. `Minimal` and `Live` share one base
 /// (the pill); `Live` grows into the panel that shows live transcription text.
 /// `None` hides the overlay entirely. Decoupled from whether the model runs in
@@ -555,6 +564,8 @@ pub struct AppSettings {
     /// names or quick-slot assignments change.
     #[serde(default)]
     pub active_transcription_preset_id: Option<String>,
+    #[serde(default)]
+    pub quick_selector_position: QuickSelectorPosition,
     #[serde(default)]
     pub onboarding_completed: bool,
     #[serde(default = "default_always_on_microphone")]
@@ -1335,6 +1346,7 @@ pub fn get_default_settings() -> AppSettings {
         selected_model: "".to_string(),
         transcription_presets: default_transcription_presets(),
         active_transcription_preset_id: None,
+        quick_selector_position: QuickSelectorPosition::default(),
         onboarding_completed: false,
         always_on_microphone: false,
         selected_microphone: None,
@@ -1927,6 +1939,10 @@ mod tests {
             .expect("preset field must have a serde default");
         assert!(settings.transcription_presets.is_empty());
         assert_eq!(settings.active_transcription_preset_id, None);
+        assert_eq!(
+            settings.quick_selector_position,
+            QuickSelectorPosition::Auto
+        );
         assert!(!is_optional_shortcut_enabled(
             &settings,
             "quick_preset_selector"

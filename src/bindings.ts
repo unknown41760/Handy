@@ -37,6 +37,11 @@ async deleteTranscriptionPreset(id: string) : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Update one dynamic transcription preset. Shortcut editing stays in the
+ * existing `change_binding` command; this command owns the preset's
+ * model/language/translation/post-processing metadata and enable state.
+ */
 async updateTranscriptionPreset(preset: TranscriptionPreset) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("update_transcription_preset", { preset }) };
@@ -59,6 +64,9 @@ async getEffectiveTranscriptionTarget() : Promise<EffectiveTranscriptionTarget> 
 async getQuickPresetSelectorPayload() : Promise<QuickPresetSelectorPayload> {
     return await TAURI_INVOKE("get_quick_preset_selector_payload");
 },
+async changeQuickSelectorPositionSetting(position: QuickSelectorPosition) : Promise<void> {
+    await TAURI_INVOKE("change_quick_selector_position_setting", { position });
+},
 async selectQuickPresetSlot(slot: number) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("select_quick_preset_slot", { slot }) };
@@ -67,8 +75,8 @@ async selectQuickPresetSlot(slot: number) : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
-async closeQuickPresetSelector() : Promise<null> {
-    return await TAURI_INVOKE("close_quick_preset_selector");
+async closeQuickPresetSelector() : Promise<void> {
+    await TAURI_INVOKE("close_quick_preset_selector");
 },
 async changeShortcutActivationSetting(activation: ShortcutActivation) : Promise<Result<null, string>> {
     try {
@@ -957,10 +965,8 @@ async updateRecordingRetentionPeriod(period: string) : Promise<Result<null, stri
 }
 },
 /**
- * Checks if the Mac is a laptop by detecting battery presence
- * 
- * This uses pmset to check for battery information.
- * Returns true if a battery is detected (laptop), false otherwise (desktop)
+ * Stub implementation for non-macOS platforms
+ * Always returns false since laptop detection is macOS-specific
  */
 async isLaptop() : Promise<Result<boolean, string>> {
     try {
@@ -991,6 +997,7 @@ streamTextEvent: "stream-text-event"
 
 /** user-defined types **/
 
+export type ActivePresetSelection = { preset_id: string | null; preset_name: string; model_id: string }
 /**
  * The container-level `serde(default)` (backed by the `Default` impl below)
  * guarantees every field — including ones added in the future — falls back to
@@ -1026,16 +1033,25 @@ hold_threshold_ms?: number; audio_feedback?: boolean; audio_feedback_volume?: nu
  * upgrading from before this key existed are blanked by the migration so they
  * see the current release's notes — see `apply_settings_migrations`.
  */
-whats_new_last_seen_version?: string; selected_model?: string; transcription_presets?: TranscriptionPreset[]; active_transcription_preset_id?: string | null; onboarding_completed?: boolean; always_on_microphone?: boolean; selected_microphone?: string | null;
+whats_new_last_seen_version?: string; selected_model?: string;
+/**
+ * Optional user-created hotkey-driven transcription profiles. Fresh
+ * installs start with none; each preset keeps a stable persisted ID.
+ */
+transcription_presets?: TranscriptionPreset[];
+/**
+ * `None` is normal Handy/Default mode. Preset IDs remain stable even when
+ * names or quick-slot assignments change.
+ */
+active_transcription_preset_id?: string | null; quick_selector_position?: QuickSelectorPosition; onboarding_completed?: boolean; always_on_microphone?: boolean; selected_microphone?: string | null;
 /**
  * Which input channel to use on the selected microphone device.
  * None means "average all channels" (original behavior).
  */
 selected_channel?: number | null; clamshell_microphone?: string | null; selected_output_device?: string | null; translate_to_english?: boolean; selected_language?: string; overlay_position?: OverlayPosition; debug_mode?: boolean; log_level?: LogLevel; custom_words?: string[]; model_unload_timeout?: ModelUnloadTimeout; word_correction_threshold?: number; history_limit?: number; recording_retention_period?: RecordingRetentionPeriod; paste_method?: PasteMethod; clipboard_handling?: ClipboardHandling; auto_submit?: boolean; auto_submit_key?: AutoSubmitKey; post_process_enabled?: boolean; post_process_provider_id?: string; post_process_providers?: PostProcessProvider[]; post_process_api_keys?: SecretMap; post_process_models?: Partial<{ [key in string]: string }>; post_process_prompts?: LLMPrompt[]; post_process_selected_prompt_id?: string | null; mute_while_recording?: boolean; append_trailing_space?: boolean; app_language?: string; theme?: Theme; experimental_enabled?: boolean; lazy_stream_close?: boolean; keyboard_implementation?: KeyboardImplementation; show_tray_icon?: boolean; paste_delay_ms?: number; paste_delay_after_ms?: number; 
 /**
- * Debug-gated ("beta") receipt-sequenced paste: restore the clipboard only
- * after the target app actually reads the transcript, instead of after a
- * fixed delay. See `paste_tx`. macOS and Windows only.
+ * Restore the clipboard after the target reads the transcript, rather than
+ * after a fixed delay. Enabled by default on Windows; still opt-in on macOS.
  */
 reliable_paste?: boolean; typing_tool?: TypingTool; external_script_path?: string | null; filler_word_removal_enabled?: boolean; custom_filler_words?: string[] | null; transcribe_accelerator?: TranscribeAcceleratorSetting; ort_accelerator?: OrtAcceleratorSetting; 
 /**
@@ -1057,10 +1073,10 @@ overlay_style?: OverlayStyle }
 export type AudioDevice = { index: string; name: string; is_default: boolean }
 export type AutoSubmitKey = "enter" | "ctrl_enter" | "cmd_enter"
 export type AvailableAccelerators = { transcribe: string[]; ort: string[]; gpu_devices: GpuDeviceOption[] }
-export type ActivePresetSelection = { preset_id: string | null; preset_name: string; model_id: string }
 export type BindingResponse = { success: boolean; binding: ShortcutBinding | null; error: string | null }
 export type ClipboardHandling = "dont_modify" | "copy_to_clipboard"
 export type CustomSounds = { start: boolean; stop: boolean }
+export type EffectiveTranscriptionTarget = { preset_id: string | null; preset_name: string | null; model_id: string; recording: boolean }
 export type EngineType = 
 /**
  * Any GGML/GGUF model loaded through transcribe-cpp (Whisper, Parakeet,
@@ -1127,6 +1143,9 @@ export type PaginatedHistory = { entries: HistoryEntry[]; has_more: boolean }
 export type PasteMethod = "ctrl_v" | "direct" | "none" | "shift_insert" | "ctrl_shift_v" | "external_script"
 export type PermissionAccess = "allowed" | "denied" | "unknown"
 export type PostProcessProvider = { id: string; label: string; base_url: string; allow_base_url_edit?: boolean; models_endpoint?: string | null; supports_structured_output?: boolean }
+export type QuickPresetSelectorPayload = { slots: QuickPresetSlot[]; active_preset_id: string | null }
+export type QuickPresetSlot = { slot: number; preset_id: string | null; name: string; active: boolean }
+export type QuickSelectorPosition = "mouse" | "bottom" | "auto"
 export type RecordingRetentionPeriod = "never" | "preserve_limit" | "days_3" | "weeks_2" | "months_3"
 export type SecretMap = Partial<{ [key in string]: string }>
 export type SecureInputStatus = { 
@@ -1180,10 +1199,6 @@ export type ShortcutActivation =
  */
 "hold_or_toggle"
 export type ShortcutBinding = { id: string; name: string; description: string; default_binding: string; current_binding: string }
-export type TranscriptionPreset = { id: string; name: string; enabled: boolean; model_id: string; language: string; translate_to_english: boolean; post_process: boolean; post_process_prompt_id: string | null; quick_slot: number | null }
-export type EffectiveTranscriptionTarget = { preset_id: string | null; preset_name: string | null; model_id: string; recording: boolean }
-export type QuickPresetSlot = { slot: number; preset_id: string | null; name: string; active: boolean }
-export type QuickPresetSelectorPayload = { slots: QuickPresetSlot[]; active_preset_id: string | null }
 export type SoundTheme = "marimba" | "pop" | "custom"
 /**
  * Phase of the streaming overlay card, emitted to drive its UI state.
@@ -1223,6 +1238,22 @@ export type StreamWorkKind = "transcribing" | "polishing"
  */
 export type Theme = "system" | "light" | "dark"
 export type TranscribeAcceleratorSetting = "auto" | "cpu" | "gpu"
+/**
+ * A user-configurable speech-to-text preset triggered by its own global shortcut.
+ * The shortcut itself lives in `bindings` under the same `id`, so it can reuse
+ * Handy's existing shortcut editor and keyboard backends.
+ */
+export type TranscriptionPreset = { id: string; name: string; enabled: boolean;
+/**
+ * Empty means "use the normal selected model".
+ */
+model_id: string; language: string; translate_to_english: boolean; post_process: boolean; post_process_prompt_id: string | null;
+/**
+ * Optional fixed position in the quick selector. Slot 1 is permanently
+ * reserved for Default. Values above the currently-visible first ring are
+ * preserved so a future second ring does not require a schema redesign.
+ */
+quick_slot?: number | null }
 export type TypingTool = "auto" | "wtype" | "kwtype" | "dotool" | "ydotool" | "xdotool"
 export type VadBackend = "silero" | "earshot"
 export type WindowsMicrophonePermissionStatus = { supported: boolean; overall_access: PermissionAccess; device_access: PermissionAccess; app_access: PermissionAccess; desktop_app_access: PermissionAccess }

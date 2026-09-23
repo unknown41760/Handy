@@ -1,7 +1,11 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
-import { commands, type TranscriptionPreset } from "@/bindings";
+import {
+  commands,
+  type QuickSelectorPosition,
+  type TranscriptionPreset,
+} from "@/bindings";
 import { useSettings } from "@/hooks/useSettings";
 import { useModelStore } from "@/stores/modelStore";
 import {
@@ -353,7 +357,8 @@ const PresetCard: React.FC<PresetCardProps> = ({ preset }) => {
 
 export const PresetsSettings: React.FC = () => {
   const { t } = useTranslation();
-  const { settings, refreshSettings } = useSettings();
+  const { settings, refreshSettings, updateSetting, isUpdating } =
+    useSettings();
   const [creating, setCreating] = useState(false);
   const [selectingActive, setSelectingActive] = useState(false);
   const presets = settings?.transcription_presets ?? [];
@@ -449,6 +454,41 @@ export const PresetsSettings: React.FC = () => {
                 "settings.presets.quickSelectorShortcutDescription",
               )}
             />
+            <SettingContainer
+              title={t("settings.presets.quickSelectorPosition")}
+              description={t(
+                "settings.presets.quickSelectorPositionDescription",
+              )}
+              grouped={true}
+              layout="stacked"
+            >
+              <Select
+                value={settings?.quick_selector_position ?? "auto"}
+                options={[
+                  {
+                    value: "mouse",
+                    label: t("settings.presets.quickSelectorAtMouse"),
+                  },
+                  {
+                    value: "bottom",
+                    label: t("settings.presets.quickSelectorAtBottom"),
+                  },
+                  {
+                    value: "auto",
+                    label: t("settings.presets.quickSelectorAuto"),
+                  },
+                ]}
+                isClearable={false}
+                disabled={isUpdating("quick_selector_position")}
+                onChange={(value) =>
+                  value &&
+                  void updateSetting(
+                    "quick_selector_position",
+                    value as QuickSelectorPosition,
+                  )
+                }
+              />
+            </SettingContainer>
           </SettingsGroup>
           {presets.map((preset) => (
             <PresetCard key={preset.id} preset={preset} />
