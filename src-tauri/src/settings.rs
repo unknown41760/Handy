@@ -631,10 +631,9 @@ pub struct AppSettings {
     pub paste_delay_ms: u64,
     #[serde(default = "default_paste_delay_after_ms")]
     pub paste_delay_after_ms: u64,
-    /// Debug-gated ("beta") receipt-sequenced paste: restore the clipboard only
-    /// after the target app actually reads the transcript, instead of after a
-    /// fixed delay. See `paste_tx`. macOS and Windows only.
-    #[serde(default)]
+    /// Restore the clipboard after the target reads the transcript, rather than
+    /// after a fixed delay. Enabled by default on Windows; still opt-in on macOS.
+    #[serde(default = "default_reliable_paste")]
     pub reliable_paste: bool,
     #[serde(default = "default_typing_tool")]
     pub typing_tool: TypingTool,
@@ -914,7 +913,7 @@ pub(crate) fn normalize_transcription_presets(settings: &mut AppSettings) -> boo
     changed
 }
 
-const CURRENT_SETTINGS_SCHEMA_VERSION: u32 = 2;
+const CURRENT_SETTINGS_SCHEMA_VERSION: u32 = 3;
 
 fn default_settings_schema_version() -> u32 {
     CURRENT_SETTINGS_SCHEMA_VERSION
@@ -997,6 +996,10 @@ fn default_paste_delay_ms() -> u64 {
 
 fn default_paste_delay_after_ms() -> u64 {
     60
+}
+
+fn default_reliable_paste() -> bool {
+    cfg!(target_os = "windows")
 }
 
 fn default_auto_submit() -> bool {
@@ -1369,7 +1372,7 @@ pub fn get_default_settings() -> AppSettings {
         show_tray_icon: default_show_tray_icon(),
         paste_delay_ms: default_paste_delay_ms(),
         paste_delay_after_ms: default_paste_delay_after_ms(),
-        reliable_paste: false,
+        reliable_paste: default_reliable_paste(),
         typing_tool: default_typing_tool(),
         external_script_path: None,
         filler_word_removal_enabled: default_filler_word_removal_enabled(),
@@ -1765,6 +1768,19 @@ fn apply_settings_migrations(
         // transcribe.cpp 0.2 replaced integer registry indices with opaque
         // process-local handles. Clear every old index once.
         settings.transcribe_gpu_device = default_transcribe_gpu_device();
+        settings.settings_schema_version = CURRENT_SETTINGS_SCHEMA_VERSION;
+        updated = true;
+    }
+
+    if stored_schema_version < 3 {
+        // The old 60 ms clipboard restore can race a busy target's paste and
+        // also puts temporary transcripts in Windows clipboard history. Move
+        // existing Windows installs to the receipt-based path once; the debug
+        // toggle remains an explicit opt-out after this migration.
+        #[cfg(target_os = "windows")]
+        {
+            settings.reliable_paste = true;
+        }
         settings.settings_schema_version = CURRENT_SETTINGS_SCHEMA_VERSION;
         updated = true;
     }
@@ -2612,6 +2628,26 @@ mod tests {
             settings.shortcut_activation,
             ShortcutActivation::HoldOrToggle
         );
+    }
+
+    #[test]
+    fn reliable_paste_migrates_once_and_keeps_later_opt_out() {
+        let mut settings = get_default_settings();
+        settings.settings_schema_version = 2;
+        settings.reliable_paste = false;
+        let stored = serde_json::to_value(&settings).unwrap();
+
+        assert!(apply_settings_migrations(&mut settings, &stored));
+        assert_eq!(settings.reliable_paste, cfg!(target_os = "windows"));
+        assert_eq!(
+            settings.settings_schema_version,
+            CURRENT_SETTINGS_SCHEMA_VERSION
+        );
+
+        settings.reliable_paste = false;
+        let current = serde_json::to_value(&settings).unwrap();
+        apply_settings_migrations(&mut settings, &current);
+        assert!(!settings.reliable_paste);
     }
 
     #[test]

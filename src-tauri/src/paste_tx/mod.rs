@@ -1,4 +1,4 @@
-//! Receipt-sequenced clipboard paste ("reliable paste", debug-gated).
+//! Receipt-sequenced clipboard paste ("reliable paste").
 //!
 //! The legacy clipboard paste (`clipboard::paste_via_clipboard`) restores the
 //! previous clipboard after a fixed delay. The paste keystroke is only
@@ -27,9 +27,8 @@
 //! The restore is additionally gated on a short quiet period after the *last*
 //! receipt, because some applications read the clipboard several times per
 //! paste (Chromium probes, then reads). A bounded timeout caps how long the
-//! transcript may occupy the clipboard; the failure mode is always "the
-//! transcript stays on the clipboard a bit longer", never "stale content gets
-//! pasted".
+//! transcript may occupy the clipboard. If the target still has not read it
+//! by then, the paste cannot be confirmed.
 
 // The shared transaction state is compiled on all platforms (for the unit
 // tests), but only the macOS/Windows platform modules consume all of it.
@@ -77,8 +76,8 @@ pub(crate) struct TxState {
     pub receipts: Vec<Instant>,
     /// Someone else took clipboard ownership (user copied elsewhere, ...).
     pub ownership_lost: bool,
-    /// A newer paste transaction settled this one early (see flush logic in
-    /// the platform modules).
+    /// The platform requested early settlement (used by the macOS flush
+    /// path when a newer paste starts).
     pub cancelled: bool,
     /// The post-paste Enter (auto-submit) has been sent for this transaction.
     /// (Read on Windows; the macOS path settles via `MacPending::settled`.)
@@ -185,11 +184,11 @@ pub(crate) fn send_chord(
     }
 }
 
-/// Attempts the receipt-sequenced paste. Returns `Err` before anything has
-/// been published when the platform transaction cannot start, in which case
-/// the caller should fall back to the legacy paste path. On `Ok`, publishing
-/// and chord injection have completed and the guarded restore (plus
-/// auto-submit) finishes asynchronously.
+/// Attempts the receipt-sequenced paste. On `Ok`, publishing and chord
+/// injection have completed and the guarded restore (plus auto-submit)
+/// finishes asynchronously. A Windows error may occur after publication;
+/// callers there must not race a legacy paste against the outstanding
+/// clipboard transaction.
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 pub(crate) fn try_reliable_paste(
     text: &str,
@@ -209,6 +208,13 @@ pub(crate) fn try_reliable_paste(
         auto_submit_key,
         clipboard_handling,
     )
+}
+
+/// Do not publish another Windows transcript until the preceding paste settles.
+#[cfg(target_os = "windows")]
+pub(crate) fn wait_for_previous_windows_paste() -> Result<std::sync::MutexGuard<'static, ()>, String>
+{
+    windows::wait_for_previous()
 }
 
 #[cfg(test)]

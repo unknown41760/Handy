@@ -803,13 +803,13 @@ pub fn paste(text: String, app_handle: AppHandle) -> Result<(), String> {
             )?;
         }
         PasteMethod::CtrlV | PasteMethod::CtrlShiftV | PasteMethod::ShiftInsert => {
-            // Debug-gated receipt-sequenced paste (#502): restore the clipboard
-            // after the target actually reads the transcript, not on a timer.
-            // On success it fully handles the paste (including auto-submit and
-            // clipboard handling) asynchronously; on failure fall through to
-            // the legacy path untouched.
+            // Restore after the target reads the transcript. On Windows,
+            // report transaction failure rather than racing a legacy paste
+            // against a promise that may already own the clipboard.
             #[cfg(any(target_os = "macos", target_os = "windows"))]
             if settings.reliable_paste {
+                #[cfg(target_os = "windows")]
+                let _paste_start_guard = crate::paste_tx::wait_for_previous_windows_paste()?;
                 let reliable_result = with_enigo(&app_handle, |enigo| {
                     crate::paste_tx::try_reliable_paste(
                         &text,
@@ -824,6 +824,9 @@ pub fn paste(text: String, app_handle: AppHandle) -> Result<(), String> {
                 match reliable_result {
                     Ok(()) => return Ok(()),
                     Err(e) => {
+                        #[cfg(target_os = "windows")]
+                        return Err(e);
+                        #[cfg(target_os = "macos")]
                         log::warn!("Reliable paste unavailable ({e}); falling back to legacy paste")
                     }
                 }
